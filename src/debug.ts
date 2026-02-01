@@ -27,3 +27,15 @@ export function debugWarn(...args: unknown[]) {
 export function debugError(...args: unknown[]) {
 	if (isDebugMode()) console.error(...args);
 }
+
+/**
+ * Unified debug function. Replaces debugLog/debugWarn/debugError with a single export.
+ */
+export function debug(level: 'log' | 'warn' | 'error', ...args: unknown[]): void {
+	if (!isDebugMode()) return;
+	switch (level) {
+		case 'log': console.log(...args); break;
+		case 'warn': console.warn(...args); break;
+		case 'error': console.error(...args); break;
+	}
+}

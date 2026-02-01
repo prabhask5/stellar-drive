@@ -8,6 +8,7 @@ export declare function signIn(email: string, password: string): Promise<AuthRes
 export declare function signUp(email: string, password: string, profileData: Record<string, unknown>): Promise<AuthResponse>;
 export declare function signOut(options?: {
     preserveOfflineCredentials?: boolean;
+    preserveLocalData?: boolean;
 }): Promise<{
     error: string | null;
 }>;
@@ -44,4 +45,16 @@ export declare function changePassword(currentPassword: string, newPassword: str
 export declare function resendConfirmationEmail(email: string): Promise<{
     error: string | null;
 }>;
+/**
+ * Verify OTP token (for email confirmation).
+ * Absorbs confirm page's direct Supabase call.
+ */
+export declare function verifyOtp(tokenHash: string, type: 'signup' | 'email'): Promise<{
+    error: string | null;
+}>;
+/**
+ * Get a valid (non-expired) session, or null.
+ * Merges getSession() + isSessionExpired() into a single call.
+ */
+export declare function getValidSession(): Promise<Session | null>;
 //# sourceMappingURL=auth.d.ts.map

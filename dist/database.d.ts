@@ -1,0 +1,31 @@
+/**
+ * Database Management
+ *
+ * Engine creates and owns the Dexie instance when `database` config is provided.
+ * System tables (syncQueue, conflictHistory, offlineCredentials, offlineSession)
+ * are automatically merged into every schema version.
+ */
+import Dexie from 'dexie';
+export interface DatabaseVersionConfig {
+    version: number;
+    stores: Record<string, string>;
+    upgrade?: (tx: import('dexie').Transaction) => Promise<void>;
+}
+export interface DatabaseConfig {
+    name: string;
+    versions: DatabaseVersionConfig[];
+}
+/**
+ * Create a Dexie database with system tables auto-merged into every version.
+ */
+export declare function createDatabase(config: DatabaseConfig): Dexie;
+/**
+ * Get the engine-managed Dexie instance.
+ * Must be set via createDatabase() or _setManagedDb() before use.
+ */
+export declare function getDb(): Dexie;
+/**
+ * Set the managed database instance (used when db is provided directly via config).
+ */
+export declare function _setManagedDb(db: Dexie): void;
+//# sourceMappingURL=database.d.ts.map

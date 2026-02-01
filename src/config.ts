@@ -1,15 +1,22 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
+import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
 import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
+import { createDatabase, _setManagedDb, type DatabaseConfig } from './database';
 
 export interface SyncEngineConfig {
   tables: TableConfig[];
-  supabase: SupabaseClient;
-  db: Dexie;
   prefix: string;
+
+  /** Provide a pre-created Dexie instance (backward compat). Mutually exclusive with `database`. */
+  db?: Dexie;
+  /** Provide a pre-created Supabase client (backward compat). Engine creates one internally if not provided. */
+  supabase?: SupabaseClient;
+  /** Engine creates and owns the Dexie instance when this is provided. */
+  database?: DatabaseConfig;
 
   auth?: {
     profileExtractor?: (userMetadata: Record<string, unknown>) => Record<string, unknown>;
@@ -17,7 +24,14 @@ export interface SyncEngineConfig {
     enableOfflineAuth?: boolean;
     sessionValidationIntervalMs?: number;
     confirmRedirectPath?: string;
+    /** Check if a user has admin privileges */
+    adminCheck?: (user: User | null) => boolean;
   };
+
+  /** Called when Supabase auth state changes (SIGNED_IN, SIGNED_OUT, etc.) */
+  onAuthStateChange?: (event: string, session: Session | null) => void;
+  /** Called when user is kicked back to login (e.g., credentials invalid on reconnect) */
+  onAuthKicked?: (message: string) => void;
 
   syncDebounceMs?: number;
   syncIntervalMs?: number;
@@ -49,6 +63,16 @@ export function initEngine(config: SyncEngineConfig): void {
     _setClientPrefix(config.prefix);
     _setConfigPrefix(config.prefix);
   }
+
+  // Handle database creation
+  if (config.database) {
+    const db = createDatabase(config.database);
+    // Store on config for backward compat (engine.ts reads config.db)
+    (config as { db: Dexie }).db = db;
+  } else if (config.db) {
+    // Backward compat: use provided Dexie instance
+    _setManagedDb(config.db);
+  }
 }
 
 export function getEngineConfig(): SyncEngineConfig {
@@ -57,6 +81,7 @@ export function getEngineConfig(): SyncEngineConfig {
   }
   return engineConfig;
 }
+
 
 /**
  * Get the Supabase-to-Dexie table mapping derived from config.

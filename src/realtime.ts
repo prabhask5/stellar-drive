@@ -219,10 +219,10 @@ async function handleRealtimeChange(
         if (!newRecord) return;
 
         // Check if entity is being edited in a manual-save form
-        const isBeingEdited = remoteChangesStore.isEditing(entityId, table);
+        const _isBeingEdited = remoteChangesStore.isEditing(entityId, table);
 
         // Get local entity if it exists
-        const localEntity = await getEngineConfig().db.table(dexieTable).get(entityId);
+        const localEntity = await getEngineConfig().db!.table(dexieTable).get(entityId);
 
         // Determine which fields changed
         const changedFields: string[] = [];
@@ -248,7 +248,7 @@ async function handleRealtimeChange(
           await remoteChangesStore.markPendingDelete(entityId, table);
 
           // Now write the soft-deleted record to DB (triggers reactive store refresh)
-          await getEngineConfig().db.table(dexieTable).put(newRecord);
+          await getEngineConfig().db!.table(dexieTable).put(newRecord);
 
           recentlyProcessedByRealtime.set(entityId, Date.now());
           notifyDataUpdate(table, entityId);
@@ -263,7 +263,7 @@ async function handleRealtimeChange(
 
         if (!localEntity) {
           // New entity - just insert it
-          await getEngineConfig().db.table(dexieTable).put(newRecord);
+          await getEngineConfig().db!.table(dexieTable).put(newRecord);
           applied = true;
         } else if (!hasPendingOps) {
           // No pending ops - check if remote is newer
@@ -272,7 +272,7 @@ async function handleRealtimeChange(
 
           if (remoteUpdatedAt > localUpdatedAt) {
             // Remote is newer, accept it
-            await getEngineConfig().db.table(dexieTable).put(newRecord);
+            await getEngineConfig().db!.table(dexieTable).put(newRecord);
             applied = true;
           }
         } else {
@@ -287,7 +287,7 @@ async function handleRealtimeChange(
           );
 
           // Store merged entity
-          await getEngineConfig().db.table(dexieTable).put(resolution.mergedEntity);
+          await getEngineConfig().db!.table(dexieTable).put(resolution.mergedEntity);
           applied = true;
 
           // Store conflict history if there were conflicts
@@ -344,7 +344,7 @@ async function handleRealtimeChange(
           await remoteChangesStore.markPendingDelete(entityId, table);
 
           // Now actually delete from database (triggers reactive DOM removal)
-          await getEngineConfig().db.table(dexieTable).delete(entityId);
+          await getEngineConfig().db!.table(dexieTable).delete(entityId);
 
           // Mark as recently processed
           recentlyProcessedByRealtime.set(entityId, Date.now());
@@ -421,7 +421,7 @@ async function stopRealtimeSubscriptionsInternal(): Promise<void> {
   // Unsubscribe from channel
   if (state.channel) {
     try {
-      await getEngineConfig().supabase.removeChannel(state.channel);
+      await getEngineConfig().supabase!.removeChannel(state.channel);
     } catch (error) {
       debugError('[Realtime] Error removing channel:', error);
     }
@@ -471,7 +471,7 @@ export async function startRealtimeSubscriptions(userId: string): Promise<void> 
     // Create a single channel for all tables
     // Using a unique channel name per user
     const channelName = `${config.prefix}_sync_${userId}`;
-    state.channel = config.supabase.channel(channelName);
+    state.channel = config.supabase!.channel(channelName);
 
     // Subscribe to all tables without user_id filter
     // RLS (Row Level Security) policies handle security at the database level

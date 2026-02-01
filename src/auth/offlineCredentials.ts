@@ -6,7 +6,7 @@
 import { getEngineConfig } from '../config';
 import type { OfflineCredentials } from '../types';
 import type { User, Session } from '@supabase/supabase-js';
-import { debugLog, debugWarn, debugError } from '../debug';
+import { debugWarn, debugError } from '../debug';
 
 const CREDENTIALS_ID = 'current_user';
 
@@ -27,7 +27,7 @@ export async function cacheOfflineCredentials(
   }
 
   const config = getEngineConfig();
-  const db = config.db;
+  const db = config.db!;
 
   // Extract profile using config's profileExtractor, or use raw metadata
   const profile = config.auth?.profileExtractor
@@ -59,7 +59,7 @@ export async function cacheOfflineCredentials(
  * Returns null if no credentials are cached or if credentials are in old format
  */
 export async function getOfflineCredentials(): Promise<OfflineCredentials | null> {
-  const db = getEngineConfig().db;
+  const db = getEngineConfig().db!;
   const credentials = await db.table('offlineCredentials').get(CREDENTIALS_ID);
   if (!credentials) {
     return null;
@@ -126,7 +126,7 @@ export async function updateOfflineCredentialsPassword(newPassword: string): Pro
     return;
   }
 
-  const db = getEngineConfig().db;
+  const db = getEngineConfig().db!;
   await db.table('offlineCredentials').update(CREDENTIALS_ID, {
     password: newPassword,
     cachedAt: new Date().toISOString()
@@ -144,7 +144,7 @@ export async function updateOfflineCredentialsProfile(
     return;
   }
 
-  const db = getEngineConfig().db;
+  const db = getEngineConfig().db!;
   await db.table('offlineCredentials').update(CREDENTIALS_ID, {
     profile,
     cachedAt: new Date().toISOString()
@@ -155,6 +155,6 @@ export async function updateOfflineCredentialsProfile(
  * Clear all cached offline credentials (on logout)
  */
 export async function clearOfflineCredentials(): Promise<void> {
-  const db = getEngineConfig().db;
+  const db = getEngineConfig().db!;
   await db.table('offlineCredentials').delete(CREDENTIALS_ID);
 }

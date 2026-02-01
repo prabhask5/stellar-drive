@@ -15,7 +15,7 @@ const SESSION_ID = 'current_session';
  */
 export async function createOfflineSession(userId: string): Promise<OfflineSession> {
   const now = new Date();
-  const db = getEngineConfig().db;
+  const db = getEngineConfig().db!;
 
   const session: OfflineSession = {
     id: SESSION_ID,
@@ -41,7 +41,7 @@ export async function createOfflineSession(userId: string): Promise<OfflineSessi
  * Returns null if no session exists
  */
 export async function getOfflineSession(): Promise<OfflineSession | null> {
-  const db = getEngineConfig().db;
+  const db = getEngineConfig().db!;
   const session = await db.table('offlineSession').get(SESSION_ID);
   return session || null;
 }
@@ -67,7 +67,7 @@ export async function hasValidOfflineSession(): Promise<boolean> {
  * Clear the offline session (on logout or session invalidation)
  */
 export async function clearOfflineSession(): Promise<void> {
-  const db = getEngineConfig().db;
+  const db = getEngineConfig().db!;
   await db.table('offlineSession').delete(SESSION_ID);
 }
 

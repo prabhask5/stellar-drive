@@ -1,4 +1,4 @@
-import { debugLog, debugWarn, debugError } from './debug';
+import { debugWarn } from './debug';
 import { getEngineConfig } from './config';
 import type { SyncOperationItem } from './types';
 
@@ -6,7 +6,7 @@ import type { SyncOperationItem } from './types';
 const MAX_SYNC_RETRIES = 5;
 
 function getDb() {
-  return getEngineConfig().db;
+  return getEngineConfig().db!;
 }
 
 /**

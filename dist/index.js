@@ -1,5 +1,7 @@
 // Config
 export { initEngine, getEngineConfig } from './config';
+// Database
+export { getDb } from './database';
 // Engine lifecycle
 export { startSyncEngine, stopSyncEngine } from './engine';
 export { scheduleSyncPush, runFullSync, forceFullSync, resetSyncCursor } from './engine';
@@ -7,12 +9,23 @@ export { hydrateFromRemote, reconcileLocalWithRemote, performSync } from './engi
 export { clearLocalCache, clearPendingSyncQueue } from './engine';
 // Entity modification tracking
 export { markEntityModified, onSyncComplete } from './engine';
+// Generic CRUD operations
+export { engineCreate, engineUpdate, engineDelete, engineBatchWrite } from './data';
+// Generic query operations
+export { engineGet, engineGetAll, engineQuery, engineQueryRange, engineGetOrCreate } from './data';
 // Auth
 export { markOffline, markAuthValidated, needsAuthValidation } from './engine';
-export { signIn, signUp, signOut, getSession, isSessionExpired, changePassword, resendConfirmationEmail, getUserProfile, updateProfile } from './supabase/auth';
+export { signIn, signUp, signOut, getSession, isSessionExpired, changePassword, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
+// Auth lifecycle
+export { resolveAuthState } from './auth/resolveAuthState';
+// Admin
+export { isAdmin } from './auth/admin';
+// Offline login
+export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
+// Offline credentials (kept for backward compat during transition)
 export { cacheOfflineCredentials, getOfflineCredentials, verifyOfflineCredentials, clearOfflineCredentials, updateOfflineCredentialsPassword, updateOfflineCredentialsProfile } from './auth/offlineCredentials';
 export { createOfflineSession, getOfflineSession, getValidOfflineSession, hasValidOfflineSession, clearOfflineSession, getOfflineSessionInfo } from './auth/offlineSession';
-// Queue operations (for app repositories to call)
+// Queue operations (for app repositories to call - kept for backward compat)
 export { queueSyncOperation, queueIncrementOperation, queueSetOperation, queueMultiFieldSetOperation, queueCreateOperation, queueDeleteOperation } from './queue';
 export { coalescePendingOps, getPendingSync, getPendingEntityIds } from './queue';
 // Conflict resolution
@@ -31,8 +44,8 @@ export { initConfig, getConfig, waitForConfig, isConfigured, setConfig, clearCon
 // Device ID
 export { getDeviceId } from './deviceId';
 // Debug
-export { debugLog, debugWarn, debugError, isDebugMode, setDebugMode } from './debug';
-// Reconnect handler
+export { debugLog, debugWarn, debugError, debug, isDebugMode, setDebugMode } from './debug';
+// Reconnect handler (kept for backward compat)
 export { setReconnectHandler, callReconnectHandler } from './reconnectHandler';
 // Utilities
 export { generateId, now, calculateNewOrder } from './utils';

@@ -173,7 +173,7 @@ async function handleRealtimeChange(table, payload) {
                 if (!newRecord)
                     return;
                 // Check if entity is being edited in a manual-save form
-                const isBeingEdited = remoteChangesStore.isEditing(entityId, table);
+                const _isBeingEdited = remoteChangesStore.isEditing(entityId, table);
                 // Get local entity if it exists
                 const localEntity = await getEngineConfig().db.table(dexieTable).get(entityId);
                 // Determine which fields changed

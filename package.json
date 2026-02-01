@@ -10,9 +10,20 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
+    "check": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "dead-code": "knip",
+    "dead-code:fix": "knip --fix",
+    "cleanup": "npm run lint:fix && npm run format",
+    "validate": "npm run check && npm run lint && npm run dead-code",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -28,7 +39,13 @@
     }
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "eslint": "^9.39.2",
+    "globals": "^17.3.0",
+    "knip": "^5.82.1",
+    "prettier": "^3.8.1",
+    "svelte": "^5.0.0",
     "typescript": "^5.0.0",
-    "svelte": "^5.0.0"
+    "typescript-eslint": "^8.54.0"
   }
 }

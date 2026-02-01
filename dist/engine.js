@@ -5,6 +5,11 @@ import { getDeviceId } from './deviceId';
 import { syncStatusStore } from './stores/sync';
 import { resolveConflicts, storeConflictHistory, cleanupConflictHistory, getPendingOpsForEntity } from './conflicts';
 import { startRealtimeSubscriptions, stopRealtimeSubscriptions, onRealtimeDataUpdate, onConnectionStateChange, cleanupRealtimeTracking, isRealtimeHealthy, getConnectionState, pauseRealtime, wasRecentlyProcessedByRealtime } from './realtime';
+import { isOnline } from './stores/network';
+import { getSession } from './supabase/auth';
+import { supabase as supabaseProxy } from './supabase/client';
+import { getOfflineCredentials } from './auth/offlineCredentials';
+import { getValidOfflineSession, createOfflineSession } from './auth/offlineSession';
 // ============================================================
 // LOCAL-FIRST SYNC ENGINE
 //
@@ -16,8 +21,19 @@ import { startRealtimeSubscriptions, stopRealtimeSubscriptions, onRealtimeDataUp
 // 5. On refresh, load local state instantly, then run background sync
 // ============================================================
 // Helper functions for config-driven access
-function getDb() { return getEngineConfig().db; }
-function getSupabase() { return getEngineConfig().supabase; }
+function getDb() {
+    const db = getEngineConfig().db;
+    if (!db)
+        throw new Error('Database not initialized. Provide db or database config to initEngine().');
+    return db;
+}
+function getSupabase() {
+    const config = getEngineConfig();
+    if (config.supabase)
+        return config.supabase;
+    // Fall back to the proxy-based supabase client
+    return supabaseProxy;
+}
 function getDexieTableName(supabaseName) {
     const table = getEngineConfig().tables.find(t => t.supabaseName === supabaseName);
     return table?.dexieTable || supabaseName;
@@ -201,7 +217,7 @@ function initDebugWindowUtilities() {
 }
 let syncTimeout = null;
 let syncInterval = null;
-let hasHydrated = false; // Track if initial hydration has been attempted
+let _hasHydrated = false; // Track if initial hydration has been attempted
 // EGRESS OPTIMIZATION: Cache getUser() validation to avoid network call every sync cycle
 let lastUserValidation = 0;
 let lastValidatedUserId = null;
@@ -1188,7 +1204,7 @@ export async function reconcileLocalWithRemote() {
         const allItems = await db.table(tableConfig.dexieTable).toArray();
         for (const item of allItems) {
             if (item.updated_at && item.updated_at > cursor) {
-                const { id, ...payload } = item;
+                const { id: _id, ...payload } = item;
                 await queueSyncOperation({
                     table: tableConfig.supabaseName,
                     entityId: item.id,
@@ -1223,7 +1239,7 @@ export async function hydrateFromRemote() {
         return;
     }
     // Mark that we've attempted hydration (even if local has data)
-    hasHydrated = true;
+    _hasHydrated = true;
     // Check if local DB has any data
     let hasLocalData = false;
     for (const table of config.tables) {
@@ -1299,8 +1315,8 @@ export async function hydrateFromRemote() {
         syncStatusStore.setStatus('error');
         syncStatusStore.setError(friendlyMessage, rawMessage);
         syncStatusStore.setSyncMessage(friendlyMessage);
-        // Reset hasHydrated so next read attempt can retry hydration
-        hasHydrated = false;
+        // Reset _hasHydrated so next read attempt can retry hydration
+        _hasHydrated = false;
     }
     finally {
         releaseSyncLock();
@@ -1327,7 +1343,6 @@ async function cleanupLocalTombstones() {
         await db.transaction('rw', entityTables, async () => {
             for (const tableConfig of config.tables) {
                 const table = db.table(tableConfig.dexieTable);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const count = await table
                     .filter((item) => item.deleted === true && item.updated_at < cutoffStr)
                     .delete();
@@ -1529,6 +1544,8 @@ export async function startSyncEngine() {
     }
     // Initialize debug window utilities now that config is available
     initDebugWindowUtilities();
+    // Initialize network status monitoring (idempotent)
+    isOnline.init();
     // Subscribe to auth state changes - critical for iOS PWA where sessions can expire
     authStateUnsubscribe = supabase.auth.onAuthStateChange(async (event, session) => {
         debugLog(`[SYNC] Auth state change: ${event}`);
@@ -1551,6 +1568,76 @@ export async function startSyncEngine() {
                 }
                 // Run a sync to push any pending changes
                 runFullSync(false);
+            }
+        }
+        // Delegate to app-level callback
+        const config = getEngineConfig();
+        if (config.onAuthStateChange) {
+            config.onAuthStateChange(event, session);
+        }
+    });
+    // Register disconnect handler: create offline session from cached credentials
+    isOnline.onDisconnect(async () => {
+        debugLog('[Engine] Gone offline - creating offline session if credentials cached');
+        try {
+            const currentSession = await getSession();
+            if (!currentSession?.user?.id) {
+                debugLog('[Engine] No active Supabase session - skipping offline session creation');
+                return;
+            }
+            const credentials = await getOfflineCredentials();
+            if (!credentials) {
+                debugLog('[Engine] No cached credentials - skipping offline session creation');
+                return;
+            }
+            // SECURITY: Only create offline session if credentials match current user
+            if (credentials.userId !== currentSession.user.id || credentials.email !== currentSession.user.email) {
+                debugWarn('[Engine] Cached credentials do not match current user - skipping offline session creation');
+                return;
+            }
+            const existingSession = await getValidOfflineSession();
+            if (!existingSession) {
+                await createOfflineSession(credentials.userId);
+                debugLog('[Engine] Offline session created from cached credentials');
+            }
+        }
+        catch (e) {
+            debugError('[Engine] Failed to create offline session:', e);
+        }
+    });
+    // Register reconnect handler: re-validate credentials with Supabase
+    isOnline.onReconnect(async () => {
+        debugLog('[Engine] Back online - validating credentials');
+        const config = getEngineConfig();
+        try {
+            // Re-validate with Supabase with 15s timeout
+            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 15000));
+            const validationPromise = (async () => {
+                const { data: { user }, error } = await getSupabase().auth.getUser();
+                if (error || !user)
+                    return null;
+                return user;
+            })();
+            const user = await Promise.race([validationPromise, timeoutPromise]);
+            if (user) {
+                markAuthValidated();
+                debugLog('[Engine] Auth validated on reconnect');
+                // Trigger sync after successful auth validation
+                runFullSync(false);
+            }
+            else {
+                debugWarn('[Engine] Auth validation failed on reconnect');
+                if (config.onAuthKicked) {
+                    // Stop engine and clear data
+                    await clearPendingSyncQueue();
+                    config.onAuthKicked('Session expired. Please sign in again.');
+                }
+            }
+        }
+        catch (e) {
+            debugError('[Engine] Reconnect auth check failed:', e);
+            if (config.onAuthKicked) {
+                config.onAuthKicked('Failed to verify session. Please sign in again.');
             }
         }
     });
@@ -1754,7 +1841,7 @@ export async function stopSyncEngine() {
         visibilityDebounceTimeout = null;
     }
     releaseSyncLock();
-    hasHydrated = false;
+    _hasHydrated = false;
 }
 // Clear local cache (for logout)
 export async function clearLocalCache() {
@@ -1780,7 +1867,7 @@ export async function clearLocalCache() {
         // Also remove legacy cursor for cleanup
         localStorage.removeItem('lastSyncCursor');
     }
-    hasHydrated = false;
+    _hasHydrated = false;
 }
 // Manual sync trigger (for UI button / pull-to-refresh)
 export async function performSync() {

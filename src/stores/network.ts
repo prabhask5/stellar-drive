@@ -1,6 +1,6 @@
 import { writable, type Readable } from 'svelte/store';
 const browser = typeof window !== 'undefined';
-import { debugLog, debugWarn, debugError } from '../debug';
+import { debugError } from '../debug';
 
 // Callbacks can be sync or async
 type NetworkCallback = () => void | Promise<void>;
@@ -15,6 +15,7 @@ function createNetworkStore(): Readable<boolean> & {
   const disconnectCallbacks: Set<NetworkCallback> = new Set();
   let wasOffline = false;
   let currentValue = true; // Track current value to prevent redundant updates
+  let initialized = false; // Prevent double-initialization
 
   function setIfChanged(value: boolean) {
     if (value !== currentValue) {
@@ -40,6 +41,8 @@ function createNetworkStore(): Readable<boolean> & {
 
   function init() {
     if (!browser) return;
+    if (initialized) return; // Idempotent
+    initialized = true;
 
     // Set initial state
     const initiallyOnline = navigator.onLine;

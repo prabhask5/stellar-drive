@@ -7,8 +7,10 @@ import {
   updateOfflineCredentialsProfile
 } from '../auth/offlineCredentials';
 import { clearOfflineSession } from '../auth/offlineSession';
-import { debugLog, debugWarn, debugError } from '../debug';
+import { debugWarn, debugError } from '../debug';
 import { getEngineConfig } from '../config';
+import { syncStatusStore } from '../stores/sync';
+import { authState } from '../stores/authState';
 
 /**
  * Get the email confirmation redirect URL
@@ -80,19 +82,63 @@ export async function signUp(
 
 export async function signOut(options?: {
   preserveOfflineCredentials?: boolean;
+  preserveLocalData?: boolean;
 }): Promise<{ error: string | null }> {
-  // Clear offline data
+  // 1. Stop sync engine (import dynamically to avoid circular deps)
   try {
-    // Only clear credentials if not preserving them (e.g., when offline, keep for re-auth)
-    if (!options?.preserveOfflineCredentials) {
-      await clearOfflineCredentials();
+    const { stopSyncEngine, clearLocalCache, clearPendingSyncQueue } = await import('../engine');
+
+    await stopSyncEngine();
+
+    if (!options?.preserveLocalData) {
+      // 2. Clear pending sync queue
+      await clearPendingSyncQueue();
+
+      // 3. Clear local cache
+      await clearLocalCache();
     }
-    await clearOfflineSession();
   } catch (e) {
-    debugError('[Auth] Failed to clear offline data:', e);
+    debugError('[Auth] Failed to stop engine/clear data:', e);
   }
 
+  // 4. Clear offline session
+  try {
+    await clearOfflineSession();
+  } catch (e) {
+    debugError('[Auth] Failed to clear offline session:', e);
+  }
+
+  // 5. Clear offline credentials (only if online, for offline re-login preservation)
+  try {
+    if (!options?.preserveOfflineCredentials) {
+      const isOnline = typeof navigator !== 'undefined' && navigator.onLine;
+      if (isOnline) {
+        await clearOfflineCredentials();
+      }
+    }
+  } catch (e) {
+    debugError('[Auth] Failed to clear offline credentials:', e);
+  }
+
+  // 6. Supabase auth signOut
   const { error } = await supabase.auth.signOut();
+
+  // 7. Clear sb-* localStorage keys
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'));
+      keys.forEach((k) => localStorage.removeItem(k));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+
+  // 8. Reset sync status store
+  syncStatusStore.reset();
+
+  // 9. Reset auth state store
+  authState.reset();
+
   return { error: error?.message || null };
 }
 
@@ -280,4 +326,31 @@ export async function resendConfirmationEmail(email: string): Promise<{ error: s
   });
 
   return { error: error?.message || null };
+}
+
+/**
+ * Verify OTP token (for email confirmation).
+ * Absorbs confirm page's direct Supabase call.
+ */
+export async function verifyOtp(
+  tokenHash: string,
+  type: 'signup' | 'email'
+): Promise<{ error: string | null }> {
+  const { error } = await supabase.auth.verifyOtp({
+    token_hash: tokenHash,
+    type
+  });
+
+  return { error: error?.message || null };
+}
+
+/**
+ * Get a valid (non-expired) session, or null.
+ * Merges getSession() + isSessionExpired() into a single call.
+ */
+export async function getValidSession(): Promise<Session | null> {
+  const session = await getSession();
+  if (!session) return null;
+  if (isSessionExpired(session)) return null;
+  return session;
 }

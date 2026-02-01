@@ -7,6 +7,7 @@ function createNetworkStore() {
     const disconnectCallbacks = new Set();
     let wasOffline = false;
     let currentValue = true; // Track current value to prevent redundant updates
+    let initialized = false; // Prevent double-initialization
     function setIfChanged(value) {
         if (value !== currentValue) {
             currentValue = value;
@@ -28,6 +29,9 @@ function createNetworkStore() {
     function init() {
         if (!browser)
             return;
+        if (initialized)
+            return; // Idempotent
+        initialized = true;
         // Set initial state
         const initiallyOnline = navigator.onLine;
         currentValue = initiallyOnline;

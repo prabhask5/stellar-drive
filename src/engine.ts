@@ -1,4 +1,4 @@
-import { getEngineConfig, getTableMap } from './config';
+import { getEngineConfig } from './config';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import {
   getPendingSync,
@@ -30,6 +30,11 @@ import {
   wasRecentlyProcessedByRealtime,
   type RealtimeConnectionState
 } from './realtime';
+import { isOnline } from './stores/network';
+import { getSession } from './supabase/auth';
+import { supabase as supabaseProxy } from './supabase/client';
+import { getOfflineCredentials } from './auth/offlineCredentials';
+import { getValidOfflineSession, createOfflineSession } from './auth/offlineSession';
 
 // ============================================================
 // LOCAL-FIRST SYNC ENGINE
@@ -43,8 +48,17 @@ import {
 // ============================================================
 
 // Helper functions for config-driven access
-function getDb() { return getEngineConfig().db; }
-function getSupabase() { return getEngineConfig().supabase; }
+function getDb() {
+  const db = getEngineConfig().db;
+  if (!db) throw new Error('Database not initialized. Provide db or database config to initEngine().');
+  return db;
+}
+function getSupabase() {
+  const config = getEngineConfig();
+  if (config.supabase) return config.supabase;
+  // Fall back to the proxy-based supabase client
+  return supabaseProxy;
+}
 function getDexieTableName(supabaseName: string): string {
   const table = getEngineConfig().tables.find(t => t.supabaseName === supabaseName);
   return table?.dexieTable || supabaseName;
@@ -286,7 +300,7 @@ function initDebugWindowUtilities(): void {
 
 let syncTimeout: ReturnType<typeof setTimeout> | null = null;
 let syncInterval: ReturnType<typeof setInterval> | null = null;
-let hasHydrated = false; // Track if initial hydration has been attempted
+let _hasHydrated = false; // Track if initial hydration has been attempted
 
 // EGRESS OPTIMIZATION: Cache getUser() validation to avoid network call every sync cycle
 let lastUserValidation = 0;
@@ -562,7 +576,7 @@ export async function forceFullSync(): Promise<void> {
   debugLog('[SYNC] Starting force full sync...');
 
   const config = getEngineConfig();
-  const db = config.db;
+  const db = config.db!;
 
   // Reset cursor to pull all data
   await resetSyncCursor();
@@ -610,8 +624,8 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   }
 
   const config = getEngineConfig();
-  const db = config.db;
-  const supabase = config.supabase;
+  const db = config.db!;
+  const supabase = config.supabase!;
 
   // Use the later of stored cursor or provided minCursor
   // This prevents re-fetching records we just pushed in this sync cycle
@@ -1449,7 +1463,7 @@ export async function reconcileLocalWithRemote(): Promise<number> {
     const allItems: any[] = await db.table(tableConfig.dexieTable).toArray();
     for (const item of allItems) {
       if (item.updated_at && item.updated_at > cursor) {
-        const { id, ...payload } = item;
+        const { id: _id, ...payload } = item;
         await queueSyncOperation({
           table: tableConfig.supabaseName,
           entityId: item.id,
@@ -1477,8 +1491,8 @@ export async function hydrateFromRemote(): Promise<void> {
   if (!acquired) return;
 
   const config = getEngineConfig();
-  const db = config.db;
-  const supabase = config.supabase;
+  const db = config.db!;
+  const supabase = config.supabase!;
 
   // Get user ID for sync cursor isolation
   const userId = await getCurrentUserId();
@@ -1490,7 +1504,7 @@ export async function hydrateFromRemote(): Promise<void> {
   }
 
   // Mark that we've attempted hydration (even if local has data)
-  hasHydrated = true;
+  _hasHydrated = true;
 
   // Check if local DB has any data
   let hasLocalData = false;
@@ -1581,8 +1595,8 @@ export async function hydrateFromRemote(): Promise<void> {
     syncStatusStore.setStatus('error');
     syncStatusStore.setError(friendlyMessage, rawMessage);
     syncStatusStore.setSyncMessage(friendlyMessage);
-    // Reset hasHydrated so next read attempt can retry hydration
-    hasHydrated = false;
+    // Reset _hasHydrated so next read attempt can retry hydration
+    _hasHydrated = false;
   } finally {
     releaseSyncLock();
   }
@@ -1605,7 +1619,7 @@ async function cleanupLocalTombstones(): Promise<number> {
   const cutoffStr = cutoffDate.toISOString();
 
   const config = getEngineConfig();
-  const db = config.db;
+  const db = config.db!;
   let totalDeleted = 0;
 
   try {
@@ -1613,9 +1627,8 @@ async function cleanupLocalTombstones(): Promise<number> {
     await db.transaction('rw', entityTables, async () => {
       for (const tableConfig of config.tables) {
         const table = db.table(tableConfig.dexieTable);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const count = await table
-          .filter((item: any) => item.deleted === true && item.updated_at < cutoffStr)
+          .filter((item: Record<string, unknown>) => item.deleted === true && (item.updated_at as string) < cutoffStr)
           .delete();
         if (count > 0) {
           debugLog(`[Tombstone] Cleaned ${count} old records from local ${tableConfig.dexieTable}`);
@@ -1650,7 +1663,7 @@ async function cleanupServerTombstones(force = false): Promise<number> {
   const cutoffStr = cutoffDate.toISOString();
 
   const config = getEngineConfig();
-  const supabase = config.supabase;
+  const supabase = config.supabase!;
 
   let totalDeleted = 0;
 
@@ -1701,8 +1714,8 @@ export async function debugTombstones(options?: {
   const cutoffStr = cutoffDate.toISOString();
 
   const config = getEngineConfig();
-  const db = config.db;
-  const supabase = config.supabase;
+  const db = config.db!;
+  const supabase = config.supabase!;
 
   debugLog('=== TOMBSTONE DEBUG ===');
   debugLog(`Cutoff date (${tombstoneMaxAgeDays} days ago): ${cutoffStr}`);
@@ -1860,6 +1873,9 @@ export async function startSyncEngine(): Promise<void> {
   // Initialize debug window utilities now that config is available
   initDebugWindowUtilities();
 
+  // Initialize network status monitoring (idempotent)
+  isOnline.init();
+
   // Subscribe to auth state changes - critical for iOS PWA where sessions can expire
   authStateUnsubscribe = supabase.auth.onAuthStateChange(async (event, session) => {
     debugLog(`[SYNC] Auth state change: ${event}`);
@@ -1882,6 +1898,81 @@ export async function startSyncEngine(): Promise<void> {
         }
         // Run a sync to push any pending changes
         runFullSync(false);
+      }
+    }
+
+    // Delegate to app-level callback
+    const config = getEngineConfig();
+    if (config.onAuthStateChange) {
+      config.onAuthStateChange(event, session);
+    }
+  });
+
+  // Register disconnect handler: create offline session from cached credentials
+  isOnline.onDisconnect(async () => {
+    debugLog('[Engine] Gone offline - creating offline session if credentials cached');
+    try {
+      const currentSession = await getSession();
+      if (!currentSession?.user?.id) {
+        debugLog('[Engine] No active Supabase session - skipping offline session creation');
+        return;
+      }
+
+      const credentials = await getOfflineCredentials();
+      if (!credentials) {
+        debugLog('[Engine] No cached credentials - skipping offline session creation');
+        return;
+      }
+
+      // SECURITY: Only create offline session if credentials match current user
+      if (credentials.userId !== currentSession.user.id || credentials.email !== currentSession.user.email) {
+        debugWarn('[Engine] Cached credentials do not match current user - skipping offline session creation');
+        return;
+      }
+
+      const existingSession = await getValidOfflineSession();
+      if (!existingSession) {
+        await createOfflineSession(credentials.userId);
+        debugLog('[Engine] Offline session created from cached credentials');
+      }
+    } catch (e) {
+      debugError('[Engine] Failed to create offline session:', e);
+    }
+  });
+
+  // Register reconnect handler: re-validate credentials with Supabase
+  isOnline.onReconnect(async () => {
+    debugLog('[Engine] Back online - validating credentials');
+    const config = getEngineConfig();
+
+    try {
+      // Re-validate with Supabase with 15s timeout
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
+      const validationPromise = (async () => {
+        const { data: { user }, error } = await getSupabase().auth.getUser();
+        if (error || !user) return null;
+        return user;
+      })();
+
+      const user = await Promise.race([validationPromise, timeoutPromise]);
+
+      if (user) {
+        markAuthValidated();
+        debugLog('[Engine] Auth validated on reconnect');
+        // Trigger sync after successful auth validation
+        runFullSync(false);
+      } else {
+        debugWarn('[Engine] Auth validation failed on reconnect');
+        if (config.onAuthKicked) {
+          // Stop engine and clear data
+          await clearPendingSyncQueue();
+          config.onAuthKicked('Session expired. Please sign in again.');
+        }
+      }
+    } catch (e) {
+      debugError('[Engine] Reconnect auth check failed:', e);
+      if (config.onAuthKicked) {
+        config.onAuthKicked('Failed to verify session. Please sign in again.');
       }
     }
   });
@@ -2119,13 +2210,13 @@ export async function stopSyncEngine(): Promise<void> {
     visibilityDebounceTimeout = null;
   }
   releaseSyncLock();
-  hasHydrated = false;
+  _hasHydrated = false;
 }
 
 // Clear local cache (for logout)
 export async function clearLocalCache(): Promise<void> {
   const config = getEngineConfig();
-  const db = config.db;
+  const db = config.db!;
 
   // Get user ID before clearing to remove their sync cursor
   const userId = await getCurrentUserId();
@@ -2149,7 +2240,7 @@ export async function clearLocalCache(): Promise<void> {
     // Also remove legacy cursor for cleanup
     localStorage.removeItem('lastSyncCursor');
   }
-  hasHydrated = false;
+  _hasHydrated = false;
 }
 
 // Manual sync trigger (for UI button / pull-to-refresh)

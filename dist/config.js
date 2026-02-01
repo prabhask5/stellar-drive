@@ -2,6 +2,7 @@ import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
+import { createDatabase, _setManagedDb } from './database';
 let engineConfig = null;
 export function initEngine(config) {
     engineConfig = config;
@@ -11,6 +12,16 @@ export function initEngine(config) {
         _setDeviceIdPrefix(config.prefix);
         _setClientPrefix(config.prefix);
         _setConfigPrefix(config.prefix);
+    }
+    // Handle database creation
+    if (config.database) {
+        const db = createDatabase(config.database);
+        // Store on config for backward compat (engine.ts reads config.db)
+        config.db = db;
+    }
+    else if (config.db) {
+        // Backward compat: use provided Dexie instance
+        _setManagedDb(config.db);
     }
 }
 export function getEngineConfig() {

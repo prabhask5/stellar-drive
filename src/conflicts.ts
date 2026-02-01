@@ -13,7 +13,7 @@
  * - All other cases: Last-write-wins (with deviceId tiebreaker)
  */
 
-import { debugLog, debugWarn, debugError } from './debug';
+import { debugLog, debugError } from './debug';
 import { getEngineConfig } from './config';
 import { getDeviceId } from './deviceId';
 import type { SyncOperationItem } from './types';
@@ -369,7 +369,7 @@ export async function storeConflictHistory(resolution: ConflictResolution): Prom
       timestamp: resolution.timestamp
     }));
 
-    await getEngineConfig().db.table('conflictHistory').bulkAdd(entries);
+    await getEngineConfig().db!.table('conflictHistory').bulkAdd(entries);
   } catch (error) {
     debugError('[Conflict] Failed to store conflict history:', error);
   }
@@ -382,7 +382,7 @@ export async function storeConflictHistory(resolution: ConflictResolution): Prom
  * @returns Array of pending operations for this entity
  */
 export async function getPendingOpsForEntity(entityId: string): Promise<SyncOperationItem[]> {
-  const allPending = await getEngineConfig().db.table('syncQueue').where('entityId').equals(entityId).toArray();
+  const allPending = await getEngineConfig().db!.table('syncQueue').where('entityId').equals(entityId).toArray();
   return allPending as unknown as SyncOperationItem[];
 }
 
@@ -395,7 +395,7 @@ export async function cleanupConflictHistory(): Promise<number> {
   const cutoffStr = cutoffDate.toISOString();
 
   try {
-    const count = await getEngineConfig().db.table('conflictHistory').filter((entry: ConflictHistoryEntry) => entry.timestamp < cutoffStr).delete();
+    const count = await getEngineConfig().db!.table('conflictHistory').filter((entry: ConflictHistoryEntry) => entry.timestamp < cutoffStr).delete();
 
     if (count > 0) {
       debugLog(`[Conflict] Cleaned up ${count} old conflict history entries`);
@@ -419,7 +419,7 @@ export async function getConflictHistory(
   entityId: string,
   limit: number = 10
 ): Promise<ConflictHistoryEntry[]> {
-  const entries = await getEngineConfig().db.table('conflictHistory')
+  const entries = await getEngineConfig().db!.table('conflictHistory')
     .where('entityId')
     .equals(entityId)
     .reverse()
