@@ -1,0 +1,9 @@
+// Stores subpath barrel – @stellar/sync-engine/stores
+export { syncStatusStore } from '../stores/sync';
+export { remoteChangesStore } from '../stores/remoteChanges';
+export { isOnline } from '../stores/network';
+export { authState, isAuthenticated, userDisplayInfo } from '../stores/authState';
+// Lifecycle event subscriptions
+export { onSyncComplete } from '../engine';
+export { onRealtimeDataUpdate } from '../realtime';
+//# sourceMappingURL=stores.js.map

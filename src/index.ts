@@ -60,3 +60,9 @@ export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './ac
 
 // Types
 export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode } from './types';
+
+// Re-export Session type from Supabase so consumers don't need a direct dependency
+export type { Session } from '@supabase/supabase-js';
+
+// Supabase credential validation (server-side setup flows)
+export { validateSupabaseCredentials } from './supabase/validate';

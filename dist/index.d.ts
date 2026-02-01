@@ -27,4 +27,6 @@ export { debug, isDebugMode, setDebugMode } from './debug';
 export { generateId, now, calculateNewOrder } from './utils';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode } from './types';
+export type { Session } from '@supabase/supabase-js';
+export { validateSupabaseCredentials } from './supabase/validate';
 //# sourceMappingURL=index.d.ts.map

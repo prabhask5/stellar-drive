@@ -1,0 +1,4 @@
+#!/bin/sh
+# Auto-build before commit so dist/ is always up to date
+npm run build
+git add dist/

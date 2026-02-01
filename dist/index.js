@@ -34,4 +34,6 @@ export { debug, isDebugMode, setDebugMode } from './debug';
 export { generateId, now, calculateNewOrder } from './utils';
 // Svelte actions
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
+// Supabase credential validation (server-side setup flows)
+export { validateSupabaseCredentials } from './supabase/validate';
 //# sourceMappingURL=index.js.map

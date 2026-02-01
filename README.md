@@ -20,59 +20,70 @@ A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** 
 
 ## Quick start
 
-Install from a Git URL (the package is not yet published to npm):
+Install from GitHub Packages:
 
 ```bash
-npm install git+https://github.com/prabhask/stellar-engine.git
+npm install @stellar/sync-engine@^1.0.0
 ```
 
-Initialize the engine at app startup (e.g., in a SvelteKit layout load function or `hooks.client.ts`):
+> Requires an `.npmrc` with `@stellar:registry=https://npm.pkg.github.com`.
+
+Initialize the engine at app startup (e.g., in a SvelteKit root `+layout.ts`):
 
 ```ts
-import { initEngine, startSyncEngine, initConfig } from '@stellar/sync-engine';
-import { supabase } from './supabase'; // your SupabaseClient instance
-import { db } from './db';             // your Dexie database instance
+import { initEngine, startSyncEngine, supabase } from '@stellar/sync-engine';
+import { initConfig } from '@stellar/sync-engine/config';
+import { resolveAuthState } from '@stellar/sync-engine/auth';
 
 initEngine({
   prefix: 'myapp',
   supabase,
-  db,
   tables: [
     {
       supabaseName: 'projects',
       dexieTable: 'projects',
       columns: 'id, name, created_at, updated_at, is_deleted, user_id',
-      ownershipFilter: 'user_id',
     },
-    {
-      supabaseName: 'tasks',
-      dexieTable: 'tasks',
-      columns: 'id, title, completed, project_id, sort_order, updated_at, is_deleted, user_id',
-      ownershipFilter: 'user_id',
-      numericMergeFields: ['sort_order'],
-      excludeFromConflict: ['updated_at'],
-    },
-    {
-      supabaseName: 'user_settings',
-      dexieTable: 'userSettings',
-      columns: 'id, theme, notifications_enabled, updated_at, user_id',
-      ownershipFilter: 'user_id',
-      isSingleton: true,
-    },
+    // ...more tables
   ],
-
-  // Optional tuning
-  syncDebounceMs: 2000,       // debounce before pushing (default: 2000)
-  syncIntervalMs: 900000,     // background full-sync interval (default: 15 min)
-  tombstoneMaxAgeDays: 1,     // garbage-collect soft deletes after N days
+  database: {
+    name: 'MyAppDB',
+    versions: [
+      {
+        version: 1,
+        stores: {
+          projects: 'id, user_id, updated_at',
+          tasks: 'id, project_id, user_id, updated_at',
+        }
+      }
+    ]
+  },
   auth: {
     enableOfflineAuth: true,
-    sessionValidationIntervalMs: 300000,
   },
 });
 
-await startSyncEngine();
+await initConfig();
+const auth = await resolveAuthState();
+if (auth.authMode !== 'none') await startSyncEngine();
 ```
+
+## Subpath exports
+
+Import only what you need via subpath exports:
+
+| Subpath | Contents |
+|---|---|
+| `@stellar/sync-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
+| `@stellar/sync-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
+| `@stellar/sync-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, etc.) |
+| `@stellar/sync-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
+| `@stellar/sync-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, etc.) |
+| `@stellar/sync-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `debug`, etc.) |
+| `@stellar/sync-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
+| `@stellar/sync-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`) |
+
+The root export (`@stellar/sync-engine`) re-exports everything for backward compatibility.
 
 ## Requirements
 
@@ -88,21 +99,24 @@ Row-Level Security policies should scope reads and writes to the authenticated u
 
 **Dexie (IndexedDB)**
 
-Your Dexie database must include two system tables alongside your application tables:
+When you provide a `database` config to `initEngine`, the engine creates and manages the Dexie instance for you. System tables (`syncQueue`, `conflictHistory`, `offlineCredentials`, `offlineSession`) are automatically merged into every schema version -- you only declare your application tables:
 
 ```ts
-const db = new Dexie('myapp');
-db.version(1).stores({
-  // System tables (required by the engine)
-  syncQueue: '++id, table, entityId, operationType, timestamp',
-  conflictHistory: '++id, entityId, entityType, timestamp',
-
-  // Your application tables
-  projects: 'id, user_id, updated_at',
-  tasks: 'id, project_id, user_id, updated_at',
-  userSettings: 'id, user_id',
-});
+database: {
+  name: 'MyAppDB',
+  versions: [
+    {
+      version: 1,
+      stores: {
+        projects: 'id, user_id, updated_at',
+        tasks: 'id, project_id, user_id, updated_at',
+      }
+    }
+  ]
+}
 ```
+
+Alternatively, you can provide a pre-created Dexie instance via the `db` config option for full control.
 
 ## Architecture
 

@@ -1,6 +1,6 @@
 {
   "name": "@stellar/sync-engine",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -8,11 +8,42 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./data": {
+      "types": "./dist/data.d.ts",
+      "import": "./dist/data.js"
+    },
+    "./auth": {
+      "types": "./dist/entries/auth.d.ts",
+      "import": "./dist/entries/auth.js"
+    },
+    "./stores": {
+      "types": "./dist/entries/stores.d.ts",
+      "import": "./dist/entries/stores.js"
+    },
+    "./types": {
+      "types": "./dist/entries/types.d.ts",
+      "import": "./dist/entries/types.js"
+    },
+    "./utils": {
+      "types": "./dist/entries/utils.d.ts",
+      "import": "./dist/entries/utils.js"
+    },
+    "./actions": {
+      "types": "./dist/entries/actions.d.ts",
+      "import": "./dist/entries/actions.js"
+    },
+    "./config": {
+      "types": "./dist/entries/config.d.ts",
+      "import": "./dist/entries/config.js"
     }
   },
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
@@ -24,6 +55,7 @@
     "dead-code:fix": "knip --fix",
     "cleanup": "npm run lint:fix && npm run format",
     "validate": "npm run check && npm run lint && npm run dead-code",
+    "prepare": "git config core.hooksPath .githooks",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/entries/*.ts",
+    "src/supabase/validate.ts"
+  ],
+  "project": [
+    "src/**/*.ts"
+  ],
+  "ignoreDependencies": [
+    "svelte"
+  ]
+}
