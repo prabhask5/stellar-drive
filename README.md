@@ -17,7 +17,7 @@ A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** 
 Install from a Git URL (the package is not yet published to npm):
 
 ```bash
-npm install git+https://github.com/<org>/stellar-engine.git
+npm install git+https://github.com/prabhask/stellar-engine.git
 ```
 
 Initialize the engine at app startup (e.g., in a SvelteKit layout load function or `hooks.client.ts`):
