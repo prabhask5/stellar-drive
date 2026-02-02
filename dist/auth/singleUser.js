@@ -200,14 +200,41 @@ export async function unlockSingleUser(gate) {
                 debugLog('[SingleUser] Unlocked with existing session');
                 return { error: null };
             }
-            // No valid session — sign in anonymously again
-            const { data, error } = await supabase.auth.signInAnonymously();
-            if (error) {
-                debugError('[SingleUser] Anonymous sign-in failed on unlock:', error.message);
-                return { error: `Unlock failed: ${error.message}` };
+            // Session expired — try refreshing to keep the SAME anonymous user.
+            // signInAnonymously() creates a NEW user who can't see the old user's data,
+            // which causes all synced items to disappear.
+            let session;
+            let user;
+            if (existingSession) {
+                debugLog('[SingleUser] Session expired, attempting refresh...');
+                const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+                if (!refreshError && refreshData.session) {
+                    session = refreshData.session;
+                    user = refreshData.session.user;
+                    debugLog('[SingleUser] Session refreshed, same user:', user.id);
+                }
+                else {
+                    // Refresh failed — fall back to signInAnonymously as last resort
+                    debugWarn('[SingleUser] Refresh failed, signing in anonymously:', refreshError?.message);
+                    const { data, error } = await supabase.auth.signInAnonymously();
+                    if (error) {
+                        debugError('[SingleUser] Anonymous sign-in failed on unlock:', error.message);
+                        return { error: `Unlock failed: ${error.message}` };
+                    }
+                    session = data.session;
+                    user = data.user;
+                }
             }
-            const session = data.session;
-            const user = data.user;
+            else {
+                // No session at all — sign in anonymously
+                const { data, error } = await supabase.auth.signInAnonymously();
+                if (error) {
+                    debugError('[SingleUser] Anonymous sign-in failed on unlock:', error.message);
+                    return { error: `Unlock failed: ${error.message}` };
+                }
+                session = data.session;
+                user = data.user;
+            }
             // If user ID changed (new anonymous user), update config
             if (config.supabaseUserId && user.id !== config.supabaseUserId) {
                 debugWarn('[SingleUser] New anonymous user ID, updating config');

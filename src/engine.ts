@@ -743,6 +743,15 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
 
   // Apply changes to local DB with conflict handling
   const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
+
+  // Diagnostic: log expected vs actual object stores to help debug NotFoundError
+  const expectedStores = [...entityTables.map(t => t.name), 'conflictHistory'];
+  const actualStores = db.tables.map(t => t.name);
+  const missing = expectedStores.filter(s => !actualStores.includes(s));
+  if (missing.length > 0) {
+    debugError(`[SYNC] Object store mismatch! Missing: ${missing.join(', ')}. DB has: ${actualStores.join(', ')}. DB version: ${db.verno}`);
+  }
+
   await db.transaction(
     'rw',
     [...entityTables, db.table('conflictHistory')],

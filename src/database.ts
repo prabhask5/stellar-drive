@@ -90,10 +90,12 @@ export async function resetDatabase(): Promise<string | null> {
   // Delete the database
   await Dexie.delete(dbName);
 
-  // Clear sync cursors and auth data from localStorage
+  // Clear sync cursors from localStorage (but NOT auth session keys —
+  // preserving the Supabase session allows the app to recover the same
+  // anonymous user on reload instead of creating a new one with no data)
   if (typeof localStorage !== 'undefined') {
     const keysToRemove = Object.keys(localStorage).filter(
-      k => k.startsWith('lastSyncCursor') || k.startsWith('sb-')
+      k => k.startsWith('lastSyncCursor')
     );
     for (const key of keysToRemove) {
       localStorage.removeItem(key);

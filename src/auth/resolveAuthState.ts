@@ -121,7 +121,28 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
     }
 
     // Config exists — check session
-    const session = await getSession();
+    let session = await getSession();
+
+    // If session exists but access token is expired, try refreshing before giving up.
+    // Anonymous sessions have refresh tokens that outlive the access token.
+    // Without this, users are forced to re-enter the PIN on every page load once
+    // the access token expires (default: 1 hour).
+    if (session && isSessionExpired(session)) {
+      debugLog('[Auth] Single-user session expired, attempting refresh...');
+      try {
+        const { data, error } = await supabase.auth.refreshSession();
+        if (!error && data.session) {
+          session = data.session;
+          debugLog('[Auth] Single-user session refreshed successfully');
+        } else {
+          debugWarn('[Auth] Single-user session refresh failed:', error?.message);
+          session = null;
+        }
+      } catch {
+        session = null;
+      }
+    }
+
     const hasValidSession = session && !isSessionExpired(session);
 
     if (hasValidSession) {
