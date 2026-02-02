@@ -117,9 +117,11 @@ async function resolveSingleUserAuthState() {
         }
         // codeLength migration: if stored config has a different codeLength than engine config,
         // the user needs to re-setup with the new PIN length.
+        // Existing configs from before codeLength was stored default to 4.
         const expectedCodeLength = getEngineConfig().auth?.singleUser?.codeLength;
-        if (expectedCodeLength && config.codeLength && config.codeLength !== expectedCodeLength) {
-            debugLog('[Auth] codeLength mismatch detected:', config.codeLength, '→', expectedCodeLength);
+        const storedCodeLength = config.codeLength ?? 4;
+        if (expectedCodeLength && storedCodeLength !== expectedCodeLength) {
+            debugLog('[Auth] codeLength mismatch detected:', storedCodeLength, '→', expectedCodeLength);
             try {
                 await resetSingleUserRemote();
             }

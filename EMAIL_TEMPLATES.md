@@ -2,7 +2,7 @@
 
 Stellar Engine uses three Supabase email templates. Configure these in your Supabase dashboard under **Authentication > Email Templates**.
 
-The template HTML files are located in the Stellar app at `static/`:
+The template HTML files are located in Stellar Planner at `static/`:
 
 | Supabase Template | Subject | File | Triggered by |
 |---|---|---|---|
