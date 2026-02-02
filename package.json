@@ -58,7 +58,7 @@
     "validate": "npm run check && npm run lint && npm run dead-code",
     "prepare": "git config core.hooksPath .githooks",
     "prepublishOnly": "npm run build",
-    "release": "npm version patch && git push && git push --tags"
+    "release": "node release.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",
