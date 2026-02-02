@@ -1635,8 +1635,14 @@ export async function startSyncEngine() {
             if (user) {
                 markAuthValidated();
                 debugLog('[Engine] Auth validated on reconnect');
-                // Trigger sync after successful auth validation
-                runFullSync(false).catch(e => debugError('[SYNC] Reconnect sync failed:', e));
+                // Trigger sync after successful auth validation (with egress cooldown)
+                const timeSinceLastSync = Date.now() - lastSuccessfulSyncTimestamp;
+                if (timeSinceLastSync < getOnlineReconnectCooldownMs()) {
+                    debugLog(`[SYNC] Skipping reconnect sync (last sync ${Math.round(timeSinceLastSync / 1000)}s ago)`);
+                }
+                else {
+                    runFullSync(false).catch(e => debugError('[SYNC] Reconnect sync failed:', e));
+                }
             }
             else {
                 debugWarn('[Engine] Auth validation failed on reconnect');
@@ -1663,18 +1669,11 @@ export async function startSyncEngine() {
     if (!navigator.onLine) {
         markOffline();
     }
-    // Handle online event - run sync and start realtime when connection restored
+    // Handle online event - restart realtime subscriptions
+    // NOTE: Sync is triggered by isOnline.onReconnect() which runs AFTER auth validation.
+    // This handler only restarts realtime — calling runFullSync() here would race
+    // with the reconnect handler's auth check and could sync before validation completes.
     handleOnlineRef = async () => {
-        // EGRESS OPTIMIZATION: Skip sync if last successful sync was recent
-        // iOS PWA triggers frequent network transitions - avoid redundant full syncs
-        const timeSinceLastSync = Date.now() - lastSuccessfulSyncTimestamp;
-        if (timeSinceLastSync < getOnlineReconnectCooldownMs()) {
-            debugLog(`[SYNC] Skipping online-reconnect sync (last sync ${Math.round(timeSinceLastSync / 1000)}s ago)`);
-        }
-        else {
-            runFullSync(false).catch(e => debugError('[SYNC] Online-reconnect sync failed:', e));
-        }
-        // Always restart realtime subscriptions regardless of cooldown
         const userId = await getCurrentUserId();
         if (userId) {
             startRealtimeSubscriptions(userId);

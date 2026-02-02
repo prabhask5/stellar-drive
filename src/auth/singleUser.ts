@@ -870,6 +870,13 @@ export async function resetSingleUserRemote(): Promise<{ error: string | null }>
       return { error: error.message };
     }
 
+    // Sign out to clear in-memory session and persisted auth tokens
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore — session may already be invalid
+    }
+
     // Clear local IndexedDB state
     try {
       const db = getDb();
@@ -880,7 +887,7 @@ export async function resetSingleUserRemote(): Promise<{ error: string | null }>
       debugWarn('[SingleUser] Failed to clear local state on remote reset:', e);
     }
 
-    // Clear Supabase session from localStorage
+    // Clear any remaining Supabase session from localStorage
     try {
       if (typeof localStorage !== 'undefined') {
         const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'));

@@ -151,6 +151,12 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
       } catch (e) {
         debugWarn('[Auth] Failed to reset remote single user:', e);
       }
+      // Sign out to kill in-memory and persisted Supabase session
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // Ignore — session may already be cleared by resetSingleUserRemote
+      }
       // Clear local state
       try {
         await db.table('singleUserConfig').delete('config');
