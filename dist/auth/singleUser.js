@@ -545,6 +545,80 @@ export async function updateSingleUserProfile(profile) {
     }
 }
 /**
+ * Initiate an email change. Requires online state.
+ * Supabase sends a confirmation email to the new address.
+ */
+export async function changeSingleUserEmail(newEmail) {
+    try {
+        const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+        if (isOffline) {
+            return { error: 'Email change requires an internet connection', confirmationRequired: false };
+        }
+        const config = await readConfig();
+        if (!config) {
+            return { error: 'Single-user mode is not set up', confirmationRequired: false };
+        }
+        const { error } = await supabase.auth.updateUser({ email: newEmail });
+        if (error) {
+            debugError('[SingleUser] Email change failed:', error.message);
+            return { error: `Email change failed: ${error.message}`, confirmationRequired: false };
+        }
+        debugLog('[SingleUser] Email change initiated, confirmation required for:', newEmail);
+        return { error: null, confirmationRequired: true };
+    }
+    catch (e) {
+        debugError('[SingleUser] Email change error:', e);
+        return { error: e instanceof Error ? e.message : 'Email change failed', confirmationRequired: false };
+    }
+}
+/**
+ * Complete email change after the user confirms via the email link.
+ * Called when the original tab receives AUTH_CONFIRMED with type 'email_change'.
+ */
+export async function completeSingleUserEmailChange() {
+    try {
+        // Refresh session to get updated user data
+        const { data, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError || !data.session) {
+            debugError('[SingleUser] Failed to refresh session after email change:', refreshError?.message);
+            return { error: 'Failed to refresh session after email change', newEmail: null };
+        }
+        const session = data.session;
+        const newEmail = session.user.email;
+        if (!newEmail) {
+            return { error: 'No email found in updated session', newEmail: null };
+        }
+        // Update local IndexedDB config
+        const config = await readConfig();
+        if (config) {
+            config.email = newEmail;
+            config.updatedAt = new Date().toISOString();
+            await writeConfig(config);
+        }
+        // Update offline credentials cache
+        try {
+            const db = getDb();
+            const creds = await db.table('offlineCredentials').get('current_user');
+            if (creds) {
+                await db.table('offlineCredentials').update('current_user', {
+                    email: newEmail,
+                    cachedAt: new Date().toISOString(),
+                });
+            }
+        }
+        catch (e) {
+            debugWarn('[SingleUser] Failed to update offline credentials after email change:', e);
+        }
+        authState.setSupabaseAuth(session);
+        debugLog('[SingleUser] Email change completed, new email:', newEmail);
+        return { error: null, newEmail };
+    }
+    catch (e) {
+        debugError('[SingleUser] Complete email change error:', e);
+        return { error: e instanceof Error ? e.message : 'Failed to complete email change', newEmail: null };
+    }
+}
+/**
  * Full reset: clear config, sign out of Supabase, clear all data.
  */
 export async function resetSingleUser() {

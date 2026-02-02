@@ -10,7 +10,7 @@ export { engineCreate, engineUpdate, engineDelete, engineBatchWrite, engineIncre
 // Generic query operations
 export { engineGet, engineGetAll, engineQuery, engineQueryRange, engineGetOrCreate } from './data';
 // Auth
-export { signIn, signUp, signOut, changePassword, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
+export { signIn, signUp, signOut, changePassword, changeEmail, completeEmailChange, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
 // Auth lifecycle
 export { resolveAuthState } from './auth/resolveAuthState';
 // Admin
@@ -18,7 +18,7 @@ export { isAdmin } from './auth/admin';
 // Offline login
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 // Single-user auth
-export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, padPin } from './auth/singleUser';
+export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange } from './auth/singleUser';
 // Device verification
 export { isDeviceTrusted, trustCurrentDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';
 // Stores

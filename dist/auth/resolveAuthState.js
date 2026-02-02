@@ -98,6 +98,22 @@ async function resolveSingleUserAuthState() {
             // (email + PIN) which creates the local config after signInWithPassword.
             return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
         }
+        if (!config.email) {
+            // Legacy config from anonymous auth era — no email means user needs to
+            // go through the new setup flow (email + PIN). Old anonymous data won't
+            // be accessible under ownership-based RLS anyway.
+            // Nuke all legacy auth artifacts so the user gets a clean slate.
+            debugLog('[Auth] Legacy config without email detected, clearing old auth state');
+            try {
+                await db.table('singleUserConfig').delete('config');
+                await db.table('offlineCredentials').delete('current_user');
+                await db.table('offlineSession').delete('current_session');
+            }
+            catch (e) {
+                debugWarn('[Auth] Failed to clear legacy auth state:', e);
+            }
+            return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+        }
         // Config exists — check session
         let session = await getSession();
         // If session exists but access token is expired, try refreshing before giving up.

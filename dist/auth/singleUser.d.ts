@@ -84,6 +84,22 @@ export declare function updateSingleUserProfile(profile: Record<string, unknown>
     error: string | null;
 }>;
 /**
+ * Initiate an email change. Requires online state.
+ * Supabase sends a confirmation email to the new address.
+ */
+export declare function changeSingleUserEmail(newEmail: string): Promise<{
+    error: string | null;
+    confirmationRequired: boolean;
+}>;
+/**
+ * Complete email change after the user confirms via the email link.
+ * Called when the original tab receives AUTH_CONFIRMED with type 'email_change'.
+ */
+export declare function completeSingleUserEmailChange(): Promise<{
+    error: string | null;
+    newEmail: string | null;
+}>;
+/**
  * Full reset: clear config, sign out of Supabase, clear all data.
  */
 export declare function resetSingleUser(): Promise<{

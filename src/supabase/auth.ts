@@ -340,6 +340,56 @@ export async function changePassword(
 }
 
 /**
+ * Initiate an email change for the current user.
+ * Supabase sends a confirmation email to the new address.
+ */
+export async function changeEmail(
+  newEmail: string
+): Promise<{ error: string | null; confirmationRequired: boolean }> {
+  const { error } = await supabase.auth.updateUser({ email: newEmail });
+
+  if (error) {
+    return { error: error.message, confirmationRequired: false };
+  }
+
+  return { error: null, confirmationRequired: true };
+}
+
+/**
+ * Complete email change after the user confirms via the email link.
+ * Refreshes session to pick up the new email and updates offline credentials.
+ */
+export async function completeEmailChange(): Promise<{ error: string | null; newEmail: string | null }> {
+  const { data, error: refreshError } = await supabase.auth.refreshSession();
+  if (refreshError || !data.session) {
+    return { error: refreshError?.message || 'Failed to refresh session', newEmail: null };
+  }
+
+  const newEmail = data.session.user.email;
+  if (!newEmail) {
+    return { error: 'No email found in updated session', newEmail: null };
+  }
+
+  // Update offline credentials cache
+  try {
+    const db = getEngineConfig().db;
+    if (db) {
+      const existing = await db.table('offlineCredentials').get('current_user');
+      if (existing) {
+        await db.table('offlineCredentials').update('current_user', {
+          email: newEmail,
+          cachedAt: new Date().toISOString(),
+        });
+      }
+    }
+  } catch (e) {
+    debugError('[Auth] Failed to update offline credentials after email change:', e);
+  }
+
+  return { error: null, newEmail };
+}
+
+/**
  * Resend confirmation email for signup
  * Should be rate-limited on the client side (30 second cooldown)
  */
@@ -361,7 +411,7 @@ export async function resendConfirmationEmail(email: string): Promise<{ error: s
  */
 export async function verifyOtp(
   tokenHash: string,
-  type: 'signup' | 'email'
+  type: 'signup' | 'email' | 'email_change'
 ): Promise<{ error: string | null }> {
   const { error } = await supabase.auth.verifyOtp({
     token_hash: tokenHash,

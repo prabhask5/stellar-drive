@@ -6,7 +6,7 @@ Complete reference for all public exports from `@prabhask5/stellar-engine`.
 
 | Subpath | Contents |
 |---|---|
-| `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
+| `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `resetDatabase`, `validateSupabaseCredentials` |
 | `@prabhask5/stellar-engine/data` | CRUD + query operations |
 | `@prabhask5/stellar-engine/auth` | Authentication functions |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions |
@@ -141,6 +141,25 @@ function getDb(): Dexie
 ```
 
 **Returns:** `Dexie` -- The managed IndexedDB instance.
+
+### `resetDatabase()`
+
+Delete the entire IndexedDB database and clear sync cursors from localStorage. Use this as a nuclear recovery option when the database is corrupted (e.g., missing object stores due to failed upgrades). After calling, the app should reload so `initEngine()` runs fresh and rehydrates from Supabase. The Supabase auth session is preserved so the user doesn't need to log in again.
+
+```ts
+async function resetDatabase(): Promise<string | null>
+```
+
+**Returns:** The name of the deleted database, or `null` if no managed database exists.
+
+**Example:**
+
+```ts
+import { resetDatabase } from '@prabhask5/stellar-engine';
+
+const dbName = await resetDatabase();
+window.location.reload(); // Re-initializes everything from scratch
+```
 
 ### `DatabaseConfig`
 
@@ -557,6 +576,48 @@ async function changePassword(
 ): Promise<{ error: string | null }>
 ```
 
+### `changeEmail(newEmail)`
+
+Initiate an email change for the current user. Supabase sends a confirmation email to the new address. The user must click the confirmation link to complete the change. Use `completeEmailChange()` after confirmation.
+
+```ts
+async function changeEmail(
+  newEmail: string
+): Promise<{ error: string | null; confirmationRequired: boolean }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `newEmail` | `string` | The new email address |
+
+**Returns:** `{ error: null, confirmationRequired: true }` on success. `confirmationRequired` is always `true` when there is no error — the caller should show a confirmation modal.
+
+### `completeEmailChange()`
+
+Complete an email change after the user confirms via the email link. Refreshes the session to pick up the new email and updates the offline credentials cache.
+
+```ts
+async function completeEmailChange(): Promise<{ error: string | null; newEmail: string | null }>
+```
+
+**Returns:** `{ error: null, newEmail: 'new@example.com' }` on success.
+
+**Example:**
+
+```ts
+import { changeEmail, completeEmailChange } from '@prabhask5/stellar-engine/auth';
+
+// Step 1: Initiate
+const { error, confirmationRequired } = await changeEmail('new@example.com');
+if (confirmationRequired) {
+  // Show "check your email" modal, listen for BroadcastChannel AUTH_CONFIRMED
+}
+
+// Step 2: After confirmation (e.g., in BroadcastChannel listener)
+const { newEmail } = await completeEmailChange();
+// newEmail === 'new@example.com'
+```
+
 ### `resendConfirmationEmail(email)`
 
 Resend the signup confirmation email.
@@ -585,12 +646,12 @@ async function updateProfile(
 
 ### `verifyOtp(tokenHash, type)`
 
-Verify an OTP token for email confirmation.
+Verify an OTP token for email confirmation or email change.
 
 ```ts
 async function verifyOtp(
   tokenHash: string,
-  type: 'signup' | 'email'
+  type: 'signup' | 'email' | 'email_change'
 ): Promise<{ error: string | null }>
 ```
 
@@ -868,6 +929,48 @@ async function updateSingleUserProfile(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `profile` | `Record<string, unknown>` | Updated profile fields (e.g., `{ firstName, lastName }`) |
+
+### `changeSingleUserEmail(newEmail)`
+
+Initiate an email change in single-user mode. Requires an internet connection. Calls `supabase.auth.updateUser({ email })` which sends a confirmation email to the new address. Use `completeSingleUserEmailChange()` after confirmation.
+
+```ts
+async function changeSingleUserEmail(
+  newEmail: string
+): Promise<{ error: string | null; confirmationRequired: boolean }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `newEmail` | `string` | The new email address |
+
+**Returns:** `{ error: null, confirmationRequired: true }` on success. Returns an error if offline or not set up.
+
+### `completeSingleUserEmailChange()`
+
+Complete an email change after the user confirms via the email link. Refreshes the session, updates the local IndexedDB config's `email` field, and updates the offline credentials cache.
+
+```ts
+async function completeSingleUserEmailChange(): Promise<{ error: string | null; newEmail: string | null }>
+```
+
+**Returns:** `{ error: null, newEmail: 'new@example.com' }` on success.
+
+**Example:**
+
+```ts
+import { changeSingleUserEmail, completeSingleUserEmailChange } from '@prabhask5/stellar-engine/auth';
+
+// Step 1: Initiate
+const { error, confirmationRequired } = await changeSingleUserEmail('new@example.com');
+if (confirmationRequired) {
+  // Show "check your email" modal, listen for BroadcastChannel AUTH_CONFIRMED
+  // with verificationType === 'email_change'
+}
+
+// Step 2: After confirmation
+const { newEmail } = await completeSingleUserEmailChange();
+```
 
 ### `resetSingleUser()`
 

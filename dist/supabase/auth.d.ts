@@ -41,6 +41,22 @@ export declare function changePassword(currentPassword: string, newPassword: str
     error: string | null;
 }>;
 /**
+ * Initiate an email change for the current user.
+ * Supabase sends a confirmation email to the new address.
+ */
+export declare function changeEmail(newEmail: string): Promise<{
+    error: string | null;
+    confirmationRequired: boolean;
+}>;
+/**
+ * Complete email change after the user confirms via the email link.
+ * Refreshes session to pick up the new email and updates offline credentials.
+ */
+export declare function completeEmailChange(): Promise<{
+    error: string | null;
+    newEmail: string | null;
+}>;
+/**
  * Resend confirmation email for signup
  * Should be rate-limited on the client side (30 second cooldown)
  */
@@ -51,7 +67,7 @@ export declare function resendConfirmationEmail(email: string): Promise<{
  * Verify OTP token (for email confirmation).
  * Absorbs confirm page's direct Supabase call.
  */
-export declare function verifyOtp(tokenHash: string, type: 'signup' | 'email'): Promise<{
+export declare function verifyOtp(tokenHash: string, type: 'signup' | 'email' | 'email_change'): Promise<{
     error: string | null;
 }>;
 /**
