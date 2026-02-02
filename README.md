@@ -113,7 +113,7 @@ Import only what you need via subpath exports:
 |---|---|
 | `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials`, `validateSchema` |
 | `@prabhask5/stellar-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
-| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, single-user: `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, `completeSingleUserSetup`, `completeDeviceVerification`, `padPin`, etc.) |
+| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, `changeEmail`, `completeEmailChange`, single-user: `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, `completeSingleUserSetup`, `completeDeviceVerification`, `changeSingleUserEmail`, `completeSingleUserEmailChange`, `padPin`, etc.) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
 | `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, `SingleUserConfig`, etc.) |
 | `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
@@ -155,7 +155,7 @@ CREATE POLICY "Users manage own devices" ON trusted_devices FOR ALL
   USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 ```
 
-If `emailConfirmation` is enabled, Supabase email templates must be configured.
+If `emailConfirmation` is enabled, Supabase email templates must be configured. See [EMAIL_TEMPLATES.md](./EMAIL_TEMPLATES.md) for the full HTML templates for signup confirmation, email change confirmation, and device verification emails.
 
 **Schema validation:** The engine automatically validates that all configured tables (and `trusted_devices` when `deviceVerification.enabled`) exist in Supabase on the first sync. Missing tables are reported via `syncStatusStore` and the debug console.
 
@@ -249,6 +249,8 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | `signIn` / `signUp` / `signOut` | Supabase auth wrappers that also manage offline credential caching. |
 | `getSession` / `isSessionExpired` | Session inspection helpers. |
 | `changePassword` / `resendConfirmationEmail` | Account management. |
+| `changeEmail(newEmail)` | Request email change (sends confirmation to new address). Returns `{ error, confirmationRequired }`. |
+| `completeEmailChange()` | Finalize email change after confirmation. Refreshes session and updates cached credentials. |
 | `getUserProfile` / `updateProfile` | Profile read/write via Supabase user metadata. |
 
 ### Offline auth
@@ -273,6 +275,8 @@ For personal apps that use a simplified PIN or password gate. Uses real Supabase
 | `lockSingleUser()` | Stop sync and reset auth state without destroying data. |
 | `changeSingleUserGate(oldGate, newGate)` | Change the PIN code or password. |
 | `updateSingleUserProfile(profile)` | Update profile in IndexedDB and Supabase metadata. |
+| `changeSingleUserEmail(newEmail)` | Request email change for single-user mode. Returns `{ error, confirmationRequired }`. |
+| `completeSingleUserEmailChange()` | Finalize email change: refresh session, update IndexedDB config and cached credentials. |
 | `resetSingleUser()` | Full reset: clear config, sign out, wipe local data. |
 | `padPin(pin)` | Pad a PIN to meet Supabase's minimum password length requirement. |
 

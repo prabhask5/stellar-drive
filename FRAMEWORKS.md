@@ -33,7 +33,7 @@ The engine requires five system tables in the consumer application's Dexie datab
 | `syncQueue` | `++id, table, entityId, timestamp` | **Outbox** for pending sync operations. Auto-incrementing ID ensures FIFO ordering. Stores intent-based operations (create/set/increment/delete) that are pushed to the server in background. |
 | `offlineCredentials` | `id` | **Singleton** (`id = 'current_user'`). Caches user email, password, and profile for offline login and reconnect credential validation. |
 | `offlineSession` | `id` | **Singleton** (`id = 'current_session'`). Stores an offline session token (UUID) so the app can authenticate users locally when the network is unavailable. |
-| `singleUserConfig` | `id` | **Singleton** (`id = 'config'`). Stores single-user mode configuration: gate hash (SHA-256), gate type, profile, and Supabase anonymous user ID. Only used when `auth.mode` is `'single-user'`. |
+| `singleUserConfig` | `id` | **Singleton** (`id = 'config'`). Stores single-user mode configuration: gate hash (SHA-256 for offline fallback), gate type, email, profile, and Supabase user ID. Only used when `auth.mode` is `'single-user'`. |
 | `conflictHistory` | `++id, entityId, entityType, timestamp` | **Diagnostic log** of field-level conflict resolutions. Records which fields conflicted, the local/remote values, the resolved value, and the strategy used. Automatically cleaned up after 30 days. |
 
 ### The Repository Pattern
@@ -167,7 +167,7 @@ The engine provides a full auth module (`src/supabase/auth.ts`) with:
 - **Corrupted data cleanup** -- on startup, any malformed Supabase auth data in localStorage (keys starting with `sb-`) is detected and cleared. An unhandled rejection handler catches runtime auth errors and auto-recovers.
 - **iOS PWA detection** -- detects standalone mode (`navigator.standalone` or `display-mode: standalone` media query) and applies enhanced auth persistence. iOS can evict localStorage data when the PWA is backgrounded; the engine logs these events for debugging.
 - **Offline credential caching** -- on successful login, credentials are cached in IndexedDB (`offlineCredentials` table). On reconnect after offline use, credentials are re-validated before sync is allowed.
-- **Single-user anonymous auth** -- in single-user mode, the engine uses `signInAnonymously()` to get a real Supabase user ID for RLS compliance. The PIN code or password is verified locally against a SHA-256 hash in IndexedDB and is never sent to the server. Requires "Allow anonymous sign-ins" enabled in Supabase Authentication settings.
+- **Single-user email/password auth** -- in single-user mode, the user provides a real email during setup. The PIN code or password is padded to meet Supabase's minimum password length and used as the actual Supabase password via `signUp()` / `signInWithPassword()`. This gives the user a real `auth.uid()` for RLS compliance. Optional email confirmation (`emailConfirmation.enabled`) and device verification (`deviceVerification.enabled`) add security layers. Email changes are supported via `changeSingleUserEmail()` which triggers a Supabase confirmation email flow.
 - **Session management** -- `getSession()`, `isSessionExpired()`, offline session fallback from localStorage.
 - **Profile management** -- configurable `profileExtractor` and `profileToMetadata` functions in engine config for app-specific profile shapes.
 

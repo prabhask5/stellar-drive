@@ -105,4 +105,31 @@ export declare function completeSingleUserEmailChange(): Promise<{
 export declare function resetSingleUser(): Promise<{
     error: string | null;
 }>;
+/**
+ * Fetch remote gate config via the get_extension_config() RPC.
+ * Returns user info if a user exists in Supabase, null otherwise.
+ * Works without authentication (uses anon key).
+ */
+export declare function fetchRemoteGateConfig(): Promise<{
+    email: string;
+    gateType: string;
+    codeLength: number;
+    profile: Record<string, unknown>;
+} | null>;
+/**
+ * Link a new device to an existing single-user account.
+ * Signs in with email + padded PIN, builds local config from user_metadata.
+ */
+export declare function linkSingleUserDevice(email: string, pin: string): Promise<{
+    error: string | null;
+    deviceVerificationRequired?: boolean;
+    maskedEmail?: string;
+}>;
+/**
+ * Reset the remote single user via the reset_single_user() RPC.
+ * Also clears all local auth state (IndexedDB + localStorage).
+ */
+export declare function resetSingleUserRemote(): Promise<{
+    error: string | null;
+}>;
 //# sourceMappingURL=singleUser.d.ts.map

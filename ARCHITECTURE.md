@@ -239,6 +239,8 @@ The module exports the following functions:
 | `lockSingleUser()` | Stops sync engine, resets auth state to `'none'`; does NOT destroy session or sign out |
 | `changeSingleUserGate(oldGate, newGate)` | Uses `signInWithPassword()` to verify old gate, `updateUser()` to set new padded gate as password |
 | `updateSingleUserProfile(profile)` | Updates profile in IndexedDB and Supabase `user_metadata` |
+| `changeSingleUserEmail(newEmail)` | Validates online, calls `updateUser({ email })`, returns `{ confirmationRequired: true }` on success |
+| `completeSingleUserEmailChange()` | Refreshes session, reads new email, updates IndexedDB config and offline credentials |
 | `resetSingleUser()` | Full reset: signs out of Supabase, clears all data, deletes config |
 
 ### 2.5 Setup Flow
@@ -295,7 +297,46 @@ unlockSingleUser(gate)
           Restore offline session or cached Supabase session
 ```
 
-### 2.7 How `resolveAuthState` Handles Single-User Mode
+### 2.7 Email Change Flow
+
+```
+User enters new email on profile page
+  |
+  v
+changeSingleUserEmail(newEmail)           changeEmail(newEmail)
+(single-user mode)                        (multi-user mode)
+  |                                         |
+  +---> Validate online (offline rejected)  +---> supabase.auth.updateUser({ email: newEmail })
+  |                                         |
+  +---> supabase.auth.updateUser(           +---> return { confirmationRequired: true }
+  |       { email: newEmail })
+  |
+  +---> return { confirmationRequired: true }
+  |
+  v
+Supabase sends confirmation email to new address
+  |
+  v
+User clicks confirmation link → /confirm page
+  |
+  v
+verifyOtp({ token_hash, type: 'email_change' })
+  |
+  v
+BroadcastChannel sends AUTH_CONFIRMED with verificationType: 'email_change'
+  |
+  v
+completeSingleUserEmailChange()           completeEmailChange()
+(single-user mode)                        (multi-user mode)
+  |                                         |
+  +---> refreshSession()                    +---> refreshSession()
+  +---> Read new email from session         +---> Read new email from session
+  +---> Update IndexedDB singleUserConfig   +---> Update offlineCredentials cache
+  +---> Update offlineCredentials cache     +---> return { newEmail }
+  +---> return { newEmail }
+```
+
+### 2.8 How `resolveAuthState` Handles Single-User Mode
 
 **File**: `src/auth/resolveAuthState.ts`
 
@@ -312,17 +353,19 @@ interface AuthStateResult {
 }
 ```
 
+**Legacy config detection:** If a config exists but has no `email` field, it is from the pre-email auth era (anonymous auth). The resolver clears all legacy auth artifacts (`singleUserConfig`, `offlineCredentials`, `offlineSession`) and returns `singleUserSetUp: false`, forcing the user through the new setup flow.
+
 Resolution logic:
 
 | Config Exists | Session State | Result |
 |---------------|---------------|--------|
-| No | -- | `authMode: 'none'`, `singleUserSetUp: false` (needs first-time setup) |
+| No (or legacy without email) | -- | `authMode: 'none'`, `singleUserSetUp: false` (needs first-time setup) |
 | Yes | Valid Supabase session | `authMode: 'supabase'`, `singleUserSetUp: true` |
 | Yes | Expired but offline | `authMode: 'supabase'` (usable offline), `singleUserSetUp: true` |
 | Yes | Offline session only | `authMode: 'offline'`, `singleUserSetUp: true` |
 | Yes | No session | `authMode: 'none'`, `singleUserSetUp: true` (locked) |
 
-### 2.8 Admin Is Always True in Single-User Mode
+### 2.9 Admin Is Always True in Single-User Mode
 
 **File**: `src/auth/admin.ts`
 
