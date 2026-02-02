@@ -132,6 +132,19 @@ export async function setupSingleUser(
       };
       await writeConfig(config);
 
+      // Write gate config to Supabase for extension access
+      try {
+        await supabase.from('single_user_config').upsert({
+          id: 'config',
+          gate_type: gateType,
+          code_length: codeLength,
+          gate_hash: gateHash,
+          profile,
+        });
+      } catch (e) {
+        debugWarn('[SingleUser] Failed to write gate config to Supabase:', e);
+      }
+
       // Cache offline credentials for offline fallback
       try {
         await cacheOfflineCredentials(getSingleUserEmail(), gate, user, session);
@@ -352,6 +365,19 @@ export async function changeSingleUserGate(
     config.updatedAt = new Date().toISOString();
     await writeConfig(config);
 
+    // Update Supabase gate config
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (!isOffline) {
+      try {
+        await supabase.from('single_user_config').update({
+          gate_hash: newHash,
+          updated_at: new Date().toISOString(),
+        }).eq('id', 'config');
+      } catch (e) {
+        debugWarn('[SingleUser] Failed to update gate hash in Supabase:', e);
+      }
+    }
+
     // Update offline credentials cache if it exists
     try {
       const db = getDb();
@@ -391,7 +417,7 @@ export async function updateSingleUserProfile(
     config.updatedAt = new Date().toISOString();
     await writeConfig(config);
 
-    // Update Supabase user_metadata if online
+    // Update Supabase user_metadata and single_user_config if online
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     if (!isOffline) {
       const engineConfig = getEngineConfig();
@@ -404,6 +430,16 @@ export async function updateSingleUserProfile(
       } else {
         // Update auth state to reflect changes in UI
         authState.updateUserProfile(metadata);
+      }
+
+      // Update single_user_config profile in Supabase
+      try {
+        await supabase.from('single_user_config').update({
+          profile,
+          updated_at: new Date().toISOString(),
+        }).eq('id', 'config');
+      } catch (e) {
+        debugWarn('[SingleUser] Failed to update profile in Supabase config:', e);
       }
     }
 
@@ -438,12 +474,19 @@ export async function resetSingleUser(): Promise<{ error: string | null }> {
     const { signOut } = await import('../supabase/auth');
     const result = await signOut();
 
-    // Clear single-user config
+    // Clear single-user config from IndexedDB
     try {
       const db = getDb();
       await db.table('singleUserConfig').delete(CONFIG_ID);
     } catch (e) {
       debugWarn('[SingleUser] Failed to clear config on reset:', e);
+    }
+
+    // Clear single_user_config from Supabase
+    try {
+      await supabase.from('single_user_config').delete().eq('id', 'config');
+    } catch (e) {
+      debugWarn('[SingleUser] Failed to delete Supabase config on reset:', e);
     }
 
     debugLog('[SingleUser] Reset complete');
