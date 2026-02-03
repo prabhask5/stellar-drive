@@ -25,12 +25,18 @@ export async function validateSupabaseCredentials(
     const tempClient = createClient(url, anonKey);
 
     // Test REST API reachability by attempting a simple query
-    const { error } = await tempClient.from(testTable || '_health_check').select('id').limit(1);
+    const { error } = await tempClient
+      .from(testTable || '_health_check')
+      .select('id')
+      .limit(1);
 
     if (error) {
       // Bad credentials
       if (error.message?.includes('Invalid API key') || error.code === 'PGRST301') {
-        return { valid: false, error: 'Invalid Supabase credentials. Check your URL and Anon Key.' };
+        return {
+          valid: false,
+          error: 'Invalid Supabase credentials. Check your URL and Anon Key.'
+        };
       }
       // Table doesn't exist but API is reachable — credentials work, schema not set up yet
       if (error.message?.includes('relation') && error.message?.includes('does not exist')) {
@@ -55,9 +61,13 @@ export async function validateSupabaseCredentials(
  *
  * If device verification is enabled, also validates the `trusted_devices` table.
  */
-export async function validateSchema(): Promise<{ valid: boolean; missingTables: string[]; errors: string[] }> {
+export async function validateSchema(): Promise<{
+  valid: boolean;
+  missingTables: string[];
+  errors: string[];
+}> {
   const config = getEngineConfig();
-  const tableNames = config.tables.map(t => t.supabaseName);
+  const tableNames = config.tables.map((t) => t.supabaseName);
 
   // device verification requires the trusted_devices table
   if (config.auth?.deviceVerification?.enabled) {
@@ -75,7 +85,9 @@ export async function validateSchema(): Promise<{ valid: boolean; missingTables:
           missingTables.push(tableName);
           errors.push(`Table "${tableName}" does not exist`);
         } else if (error.message?.includes('permission denied') || error.code === '42501') {
-          errors.push(`Table "${tableName}" exists but is not accessible (RLS or permissions error): ${error.message}`);
+          errors.push(
+            `Table "${tableName}" exists but is not accessible (RLS or permissions error): ${error.message}`
+          );
         } else {
           errors.push(`Table "${tableName}": ${error.message}`);
         }

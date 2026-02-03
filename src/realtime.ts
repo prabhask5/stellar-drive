@@ -207,7 +207,7 @@ async function handleRealtimeChange(
 
   debugLog(`[Realtime] Processing remote change: ${eventType} ${table}/${entityId}`);
 
-  const tableConfig = getEngineConfig().tables.find(t => t.supabaseName === table);
+  const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === table);
   const dexieTable = tableConfig ? getDexieTableFor(tableConfig) : undefined;
   if (!dexieTable) {
     debugWarn('[Realtime] Unknown table:', table);
@@ -239,8 +239,7 @@ async function handleRealtimeChange(
 
         // Soft delete: UPDATE with deleted=true is treated as a deletion
         // Play the delete animation BEFORE writing to DB so stores don't filter it out instantly
-        const isSoftDelete =
-          newRecord.deleted === true && localEntity && !localEntity.deleted;
+        const isSoftDelete = newRecord.deleted === true && localEntity && !localEntity.deleted;
 
         if (isSoftDelete) {
           debugLog(`[Realtime] Soft delete detected for ${table}/${entityId}`);
@@ -320,7 +319,7 @@ async function handleRealtimeChange(
           );
 
           // Call table-specific onRemoteChange hook if configured
-          const tblConfig = getEngineConfig().tables.find(t => t.supabaseName === table);
+          const tblConfig = getEngineConfig().tables.find((t) => t.supabaseName === table);
           if (tblConfig?.onRemoteChange) {
             tblConfig.onRemoteChange(table, newRecord);
           }
@@ -391,9 +390,7 @@ function scheduleReconnect(): void {
 
   reconnectScheduled = true;
   const delay = RECONNECT_BASE_DELAY * Math.pow(2, state.reconnectAttempts);
-  debugLog(
-    `[Realtime] Scheduling reconnect attempt ${state.reconnectAttempts + 1} in ${delay}ms`
-  );
+  debugLog(`[Realtime] Scheduling reconnect attempt ${state.reconnectAttempts + 1} in ${delay}ms`);
 
   state.reconnectTimeout = setTimeout(async () => {
     reconnectScheduled = false;
@@ -468,7 +465,7 @@ export async function startRealtimeSubscriptions(userId: string): Promise<void> 
     setConnectionState('connecting');
 
     const config = getEngineConfig();
-    const realtimeTables = config.tables.map(t => t.supabaseName);
+    const realtimeTables = config.tables.map((t) => t.supabaseName);
 
     // Create a single channel for all tables
     // Using a unique channel name per user

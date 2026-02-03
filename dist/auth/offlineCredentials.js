@@ -21,7 +21,7 @@ export async function cacheOfflineCredentials(email, password, user, _session) {
     // Extract profile using config's profileExtractor, or use raw metadata
     const profile = config.auth?.profileExtractor
         ? config.auth.profileExtractor(user.user_metadata || {})
-        : (user.user_metadata || {});
+        : user.user_metadata || {};
     const hashedPassword = await hashValue(password);
     const credentials = {
         id: CREDENTIALS_ID,

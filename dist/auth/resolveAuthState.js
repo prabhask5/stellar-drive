@@ -92,7 +92,7 @@ async function resolveSingleUserAuthState() {
         if (!db) {
             return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
         }
-        const config = await db.table('singleUserConfig').get('config');
+        const config = (await db.table('singleUserConfig').get('config'));
         if (!config) {
             // No local config — user hasn't set up on this device.
             // With real email/password auth, new devices go through the login flow

@@ -81,7 +81,7 @@ export async function getSingleUserInfo() {
         gateType: config.gateType,
         codeLength: config.codeLength,
         email: config.email,
-        maskedEmail: config.email ? maskEmail(config.email) : undefined,
+        maskedEmail: config.email ? maskEmail(config.email) : undefined
     };
 }
 /**
@@ -107,7 +107,7 @@ export async function setupSingleUser(gate, profile, email) {
         const profileToMetadata = engineConfig.auth?.profileToMetadata;
         const metadata = {
             ...(profileToMetadata ? profileToMetadata(profile) : profile),
-            code_length: codeLength ?? 6,
+            code_length: codeLength ?? 6
         };
         if (!isOffline) {
             // --- ONLINE SETUP ---
@@ -116,8 +116,8 @@ export async function setupSingleUser(gate, profile, email) {
                 password: paddedPassword,
                 options: {
                     emailRedirectTo: getConfirmRedirectUrl(),
-                    data: metadata,
-                },
+                    data: metadata
+                }
             });
             if (error) {
                 debugError('[SingleUser] signUp failed:', error.message);
@@ -135,7 +135,7 @@ export async function setupSingleUser(gate, profile, email) {
                 profile,
                 supabaseUserId: user.id,
                 setupAt: now,
-                updatedAt: now,
+                updatedAt: now
             };
             await writeConfig(config);
             // If email confirmation is required, session will be null
@@ -183,7 +183,7 @@ export async function setupSingleUser(gate, profile, email) {
                 email,
                 profile,
                 setupAt: now,
-                updatedAt: now,
+                updatedAt: now
             };
             await writeConfig(config);
             await createOfflineSession(tempUserId);
@@ -193,7 +193,7 @@ export async function setupSingleUser(gate, profile, email) {
                 email,
                 password: gateHash,
                 profile,
-                cachedAt: now,
+                cachedAt: now
             };
             authState.setOfflineAuth(offlineProfile);
             debugLog('[SingleUser] Setup complete (offline), temp userId:', tempUserId);
@@ -276,7 +276,7 @@ export async function unlockSingleUser(gate) {
             const paddedPassword = padPin(gate);
             const { data, error } = await supabase.auth.signInWithPassword({
                 email: config.email,
-                password: paddedPassword,
+                password: paddedPassword
             });
             if (error) {
                 debugWarn('[SingleUser] signInWithPassword failed:', error.message);
@@ -304,7 +304,7 @@ export async function unlockSingleUser(gate) {
                     return {
                         error: null,
                         deviceVerificationRequired: true,
-                        maskedEmail: maskEmail(config.email),
+                        maskedEmail: maskEmail(config.email)
                     };
                 }
                 // Trusted — touch device
@@ -364,7 +364,7 @@ export async function unlockSingleUser(gate) {
                 email: config.email || '',
                 password: config.gateHash || inputHash,
                 profile: config.profile,
-                cachedAt: new Date().toISOString(),
+                cachedAt: new Date().toISOString()
             };
             authState.setOfflineAuth(offlineProfile);
             debugLog('[SingleUser] Unlocked offline with offline session');
@@ -471,14 +471,14 @@ export async function changeSingleUserGate(oldGate, newGate) {
             // Online: verify old gate via Supabase, then update password
             const { error: verifyError } = await supabase.auth.signInWithPassword({
                 email: config.email,
-                password: padPin(oldGate),
+                password: padPin(oldGate)
             });
             if (verifyError) {
                 return { error: 'Current code is incorrect' };
             }
             // Update password in Supabase
             const { error: updateError } = await supabase.auth.updateUser({
-                password: padPin(newGate),
+                password: padPin(newGate)
             });
             if (updateError) {
                 return { error: `Failed to update code: ${updateError.message}` };
@@ -503,7 +503,7 @@ export async function changeSingleUserGate(oldGate, newGate) {
             if (creds) {
                 await db.table('offlineCredentials').update('current_user', {
                     password: newHash,
-                    cachedAt: new Date().toISOString(),
+                    cachedAt: new Date().toISOString()
                 });
             }
         }
@@ -550,7 +550,7 @@ export async function updateSingleUserProfile(profile) {
             if (creds) {
                 await db.table('offlineCredentials').update('current_user', {
                     profile,
-                    cachedAt: new Date().toISOString(),
+                    cachedAt: new Date().toISOString()
                 });
             }
         }
@@ -589,7 +589,10 @@ export async function changeSingleUserEmail(newEmail) {
     }
     catch (e) {
         debugError('[SingleUser] Email change error:', e);
-        return { error: e instanceof Error ? e.message : 'Email change failed', confirmationRequired: false };
+        return {
+            error: e instanceof Error ? e.message : 'Email change failed',
+            confirmationRequired: false
+        };
     }
 }
 /**
@@ -623,7 +626,7 @@ export async function completeSingleUserEmailChange() {
             if (creds) {
                 await db.table('offlineCredentials').update('current_user', {
                     email: newEmail,
-                    cachedAt: new Date().toISOString(),
+                    cachedAt: new Date().toISOString()
                 });
             }
         }
@@ -636,7 +639,10 @@ export async function completeSingleUserEmailChange() {
     }
     catch (e) {
         debugError('[SingleUser] Complete email change error:', e);
-        return { error: e instanceof Error ? e.message : 'Failed to complete email change', newEmail: null };
+        return {
+            error: e instanceof Error ? e.message : 'Failed to complete email change',
+            newEmail: null
+        };
     }
 }
 /**
@@ -683,7 +689,7 @@ export async function fetchRemoteGateConfig() {
             email: data.email,
             gateType: data.gateType || 'code',
             codeLength: data.codeLength || 6,
-            profile: data.profile || {},
+            profile: data.profile || {}
         };
     }
     catch (e) {
@@ -704,7 +710,7 @@ export async function linkSingleUserDevice(email, pin) {
         const paddedPassword = padPin(pin);
         const { data, error } = await supabase.auth.signInWithPassword({
             email,
-            password: paddedPassword,
+            password: paddedPassword
         });
         if (error) {
             debugWarn('[SingleUser] linkSingleUserDevice signIn failed:', error.message);
@@ -728,7 +734,7 @@ export async function linkSingleUserDevice(email, pin) {
             profile,
             supabaseUserId: user.id,
             setupAt: now,
-            updatedAt: now,
+            updatedAt: now
         };
         await writeConfig(config);
         // Check device verification
@@ -744,7 +750,7 @@ export async function linkSingleUserDevice(email, pin) {
                 return {
                     error: null,
                     deviceVerificationRequired: true,
-                    maskedEmail: maskEmail(email),
+                    maskedEmail: maskEmail(email)
                 };
             }
             await touchTrustedDevice(user.id);

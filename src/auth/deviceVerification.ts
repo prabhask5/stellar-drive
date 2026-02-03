@@ -18,14 +18,10 @@ const DEFAULT_TRUST_DURATION_DAYS = 90;
 // HELPERS
 // ============================================================
 
-function getDb() {
-  const db = getEngineConfig().db;
-  if (!db) throw new Error('Database not initialized.');
-  return db;
-}
-
 function getTrustDurationDays(): number {
-  return getEngineConfig().auth?.deviceVerification?.trustDurationDays ?? DEFAULT_TRUST_DURATION_DAYS;
+  return (
+    getEngineConfig().auth?.deviceVerification?.trustDurationDays ?? DEFAULT_TRUST_DURATION_DAYS
+  );
 }
 
 function snakeToCamelDevice(row: Record<string, unknown>): TrustedDevice {
@@ -35,7 +31,7 @@ function snakeToCamelDevice(row: Record<string, unknown>): TrustedDevice {
     deviceId: row.device_id as string,
     deviceLabel: row.device_label as string | undefined,
     trustedAt: row.trusted_at as string,
-    lastUsedAt: row.last_used_at as string,
+    lastUsedAt: row.last_used_at as string
   };
 }
 
@@ -134,15 +130,16 @@ export async function trustCurrentDevice(userId: string): Promise<void> {
     const label = getDeviceLabel();
     const now = new Date().toISOString();
 
-    const { error } = await supabase
-      .from('trusted_devices')
-      .upsert({
+    const { error } = await supabase.from('trusted_devices').upsert(
+      {
         user_id: userId,
         device_id: deviceId,
         device_label: label,
         trusted_at: now,
-        last_used_at: now,
-      }, { onConflict: 'user_id,device_id' });
+        last_used_at: now
+      },
+      { onConflict: 'user_id,device_id' }
+    );
 
     if (error) {
       debugError('[DeviceVerification] Trust device failed:', error.message);
@@ -203,10 +200,7 @@ export async function getTrustedDevices(userId: string): Promise<TrustedDevice[]
  */
 export async function removeTrustedDevice(id: string): Promise<void> {
   try {
-    const { error } = await supabase
-      .from('trusted_devices')
-      .delete()
-      .eq('id', id);
+    const { error } = await supabase.from('trusted_devices').delete().eq('id', id);
 
     if (error) {
       debugError('[DeviceVerification] Remove device failed:', error.message);
@@ -235,12 +229,12 @@ export async function sendDeviceVerification(email: string): Promise<{ error: st
     const deviceId = getDeviceId();
     const deviceLabel = getDeviceLabel();
     await supabase.auth.updateUser({
-      data: { pending_device_id: deviceId, pending_device_label: deviceLabel },
+      data: { pending_device_id: deviceId, pending_device_label: deviceLabel }
     });
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: false },
+      options: { shouldCreateUser: false }
     });
 
     if (error) {
@@ -265,7 +259,10 @@ export async function sendDeviceVerification(email: string): Promise<{ error: st
  */
 export async function trustPendingDevice(): Promise<void> {
   try {
-    const { data: { user }, error } = await supabase.auth.getUser();
+    const {
+      data: { user },
+      error
+    } = await supabase.auth.getUser();
     if (error || !user) {
       debugWarn('[DeviceVerification] trustPendingDevice: no user');
       return;
@@ -283,15 +280,16 @@ export async function trustPendingDevice(): Promise<void> {
     const now = new Date().toISOString();
 
     // Trust the originating device
-    const { error: upsertError } = await supabase
-      .from('trusted_devices')
-      .upsert({
+    const { error: upsertError } = await supabase.from('trusted_devices').upsert(
+      {
         user_id: user.id,
         device_id: pendingDeviceId,
         device_label: pendingDeviceLabel || 'Unknown device',
         trusted_at: now,
-        last_used_at: now,
-      }, { onConflict: 'user_id,device_id' });
+        last_used_at: now
+      },
+      { onConflict: 'user_id,device_id' }
+    );
 
     if (upsertError) {
       debugError('[DeviceVerification] trustPendingDevice upsert failed:', upsertError.message);
@@ -304,7 +302,7 @@ export async function trustPendingDevice(): Promise<void> {
 
     // Clear pending device from metadata
     await supabase.auth.updateUser({
-      data: { pending_device_id: null, pending_device_label: null },
+      data: { pending_device_id: null, pending_device_label: null }
     });
   } catch (e) {
     debugError('[DeviceVerification] trustPendingDevice error:', e);
@@ -318,7 +316,7 @@ export async function verifyDeviceCode(tokenHash: string): Promise<{ error: stri
   try {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
-      type: 'email',
+      type: 'email'
     });
 
     if (error) {

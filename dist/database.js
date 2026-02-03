@@ -35,8 +35,8 @@ export async function createDatabase(config) {
         const idb = db.backendDB();
         if (idb) {
             const actualStores = Array.from(idb.objectStoreNames);
-            const expectedStores = db.tables.map(t => t.name);
-            const missing = expectedStores.filter(s => !actualStores.includes(s));
+            const expectedStores = db.tables.map((t) => t.name);
+            const missing = expectedStores.filter((s) => !actualStores.includes(s));
             if (missing.length > 0) {
                 console.error(`[DB] Object store mismatch after open! Missing: ${missing.join(', ')}. ` +
                     `DB version: ${idb.version}, Dexie version: ${db.verno}. Deleting and recreating...`);
@@ -53,7 +53,9 @@ export async function createDatabase(config) {
         try {
             db.close();
         }
-        catch { /* ignore */ }
+        catch {
+            /* ignore */
+        }
         await Dexie.delete(config.name);
         db = buildDexie(config);
         await db.open();
@@ -113,7 +115,7 @@ export async function resetDatabase() {
     // preserving the Supabase session allows the app to recover the same
     // anonymous user on reload instead of creating a new one with no data)
     if (typeof localStorage !== 'undefined') {
-        const keysToRemove = Object.keys(localStorage).filter(k => k.startsWith('lastSyncCursor'));
+        const keysToRemove = Object.keys(localStorage).filter((k) => k.startsWith('lastSyncCursor'));
         for (const key of keysToRemove) {
             localStorage.removeItem(key);
         }

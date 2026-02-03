@@ -38,7 +38,7 @@ export interface SyncEngineConfig {
     /** Device verification for untrusted devices (requires email OTP) */
     deviceVerification?: {
       enabled: boolean;
-      trustDurationDays?: number;  // default: 90
+      trustDurationDays?: number; // default: 90
     };
     /** Whether signup requires email confirmation */
     emailConfirmation?: {
@@ -84,7 +84,7 @@ export function initEngine(config: SyncEngineConfig): void {
 
   // Handle database creation
   if (config.database) {
-    _dbReady = createDatabase(config.database).then(db => {
+    _dbReady = createDatabase(config.database).then((db) => {
       // Store on config for backward compat (engine.ts reads config.db)
       (config as { db: Dexie }).db = db;
     });
@@ -109,7 +109,6 @@ export function getEngineConfig(): SyncEngineConfig {
   }
   return engineConfig;
 }
-
 
 /**
  * Get the Dexie (IndexedDB) table name for a TableConfig entry.
@@ -136,10 +135,9 @@ export function getTableMap(): Record<string, string> {
  */
 export function getTableColumns(supabaseName: string): string {
   const config = getEngineConfig();
-  const table = config.tables.find(t => t.supabaseName === supabaseName);
+  const table = config.tables.find((t) => t.supabaseName === supabaseName);
   if (!table) {
     throw new Error(`Table ${supabaseName} not found in engine config`);
   }
   return table.columns;
 }
-

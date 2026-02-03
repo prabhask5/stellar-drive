@@ -16,10 +16,16 @@ import { supabase } from '../supabase/client';
 import { hashValue } from './crypto';
 import { cacheOfflineCredentials } from './offlineCredentials';
 import { createOfflineSession } from './offlineSession';
-import { isDeviceTrusted, trustCurrentDevice, touchTrustedDevice, sendDeviceVerification, maskEmail } from './deviceVerification';
+import {
+  isDeviceTrusted,
+  trustCurrentDevice,
+  touchTrustedDevice,
+  sendDeviceVerification,
+  maskEmail
+} from './deviceVerification';
 import { authState } from '../stores/authState';
 import { syncStatusStore } from '../stores/sync';
-import { getSession, isSessionExpired } from '../supabase/auth';
+import { getSession } from '../supabase/auth';
 import { debugLog, debugWarn, debugError } from '../debug';
 
 const CONFIG_ID = 'config';
@@ -96,7 +102,7 @@ export async function getSingleUserInfo(): Promise<{
     gateType: config.gateType,
     codeLength: config.codeLength,
     email: config.email,
-    maskedEmail: config.email ? maskEmail(config.email) : undefined,
+    maskedEmail: config.email ? maskEmail(config.email) : undefined
   };
 }
 
@@ -129,7 +135,7 @@ export async function setupSingleUser(
     const profileToMetadata = engineConfig.auth?.profileToMetadata;
     const metadata = {
       ...(profileToMetadata ? profileToMetadata(profile) : profile),
-      code_length: codeLength ?? 6,
+      code_length: codeLength ?? 6
     };
 
     if (!isOffline) {
@@ -139,8 +145,8 @@ export async function setupSingleUser(
         password: paddedPassword,
         options: {
           emailRedirectTo: getConfirmRedirectUrl(),
-          data: metadata,
-        },
+          data: metadata
+        }
       });
 
       if (error) {
@@ -161,7 +167,7 @@ export async function setupSingleUser(
         profile,
         supabaseUserId: user.id,
         setupAt: now,
-        updatedAt: now,
+        updatedAt: now
       };
       await writeConfig(config);
 
@@ -212,7 +218,7 @@ export async function setupSingleUser(
         email,
         profile,
         setupAt: now,
-        updatedAt: now,
+        updatedAt: now
       };
       await writeConfig(config);
 
@@ -224,7 +230,7 @@ export async function setupSingleUser(
         email,
         password: gateHash,
         profile,
-        cachedAt: now,
+        cachedAt: now
       };
       authState.setOfflineAuth(offlineProfile);
       debugLog('[SingleUser] Setup complete (offline), temp userId:', tempUserId);
@@ -249,7 +255,10 @@ export async function completeSingleUserSetup(): Promise<{ error: string | null 
     }
 
     // After email confirmation, the session should now be available
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const {
+      data: { session },
+      error: sessionError
+    } = await supabase.auth.getSession();
     if (sessionError || !session) {
       debugError('[SingleUser] No session after confirmation:', sessionError?.message);
       return { error: 'Session not found after confirmation. Please try logging in.' };
@@ -318,7 +327,7 @@ export async function unlockSingleUser(
 
       const { data, error } = await supabase.auth.signInWithPassword({
         email: config.email,
-        password: paddedPassword,
+        password: paddedPassword
       });
 
       if (error) {
@@ -350,7 +359,7 @@ export async function unlockSingleUser(
           return {
             error: null,
             deviceVerificationRequired: true,
-            maskedEmail: maskEmail(config.email),
+            maskedEmail: maskEmail(config.email)
           };
         }
 
@@ -417,7 +426,7 @@ export async function unlockSingleUser(
         email: config.email || '',
         password: config.gateHash || inputHash,
         profile: config.profile,
-        cachedAt: new Date().toISOString(),
+        cachedAt: new Date().toISOString()
       };
       authState.setOfflineAuth(offlineProfile);
       debugLog('[SingleUser] Unlocked offline with offline session');
@@ -434,7 +443,9 @@ export async function unlockSingleUser(
  * Complete device verification after OTP email link is clicked.
  * Called when the original tab receives AUTH_CONFIRMED via BroadcastChannel.
  */
-export async function completeDeviceVerification(tokenHash?: string): Promise<{ error: string | null }> {
+export async function completeDeviceVerification(
+  tokenHash?: string
+): Promise<{ error: string | null }> {
   try {
     // If tokenHash is provided, verify it (called from confirm page)
     if (tokenHash) {
@@ -444,7 +455,10 @@ export async function completeDeviceVerification(tokenHash?: string): Promise<{ 
     }
 
     // After OTP verification, session should be available
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const {
+      data: { session },
+      error: sessionError
+    } = await supabase.auth.getSession();
     if (sessionError || !session) {
       return { error: 'Session not found after verification' };
     }
@@ -490,7 +504,10 @@ export async function completeDeviceVerification(tokenHash?: string): Promise<{ 
  */
 export async function pollDeviceVerification(): Promise<boolean> {
   try {
-    const { data: { user }, error } = await supabase.auth.getUser();
+    const {
+      data: { user },
+      error
+    } = await supabase.auth.getUser();
     if (error || !user) return false;
     return isDeviceTrusted(user.id);
   } catch {
@@ -534,7 +551,7 @@ export async function changeSingleUserGate(
       // Online: verify old gate via Supabase, then update password
       const { error: verifyError } = await supabase.auth.signInWithPassword({
         email: config.email,
-        password: padPin(oldGate),
+        password: padPin(oldGate)
       });
 
       if (verifyError) {
@@ -543,7 +560,7 @@ export async function changeSingleUserGate(
 
       // Update password in Supabase
       const { error: updateError } = await supabase.auth.updateUser({
-        password: padPin(newGate),
+        password: padPin(newGate)
       });
 
       if (updateError) {
@@ -570,7 +587,7 @@ export async function changeSingleUserGate(
       if (creds) {
         await db.table('offlineCredentials').update('current_user', {
           password: newHash,
-          cachedAt: new Date().toISOString(),
+          cachedAt: new Date().toISOString()
         });
       }
     } catch (e) {
@@ -613,7 +630,6 @@ export async function updateSingleUserProfile(
       } else {
         authState.updateUserProfile(metadata);
       }
-
     }
 
     // Update offline credentials cache
@@ -623,7 +639,7 @@ export async function updateSingleUserProfile(
       if (creds) {
         await db.table('offlineCredentials').update('current_user', {
           profile,
-          cachedAt: new Date().toISOString(),
+          cachedAt: new Date().toISOString()
         });
       }
     } catch (e) {
@@ -667,7 +683,10 @@ export async function changeSingleUserEmail(
     return { error: null, confirmationRequired: true };
   } catch (e) {
     debugError('[SingleUser] Email change error:', e);
-    return { error: e instanceof Error ? e.message : 'Email change failed', confirmationRequired: false };
+    return {
+      error: e instanceof Error ? e.message : 'Email change failed',
+      confirmationRequired: false
+    };
   }
 }
 
@@ -675,12 +694,18 @@ export async function changeSingleUserEmail(
  * Complete email change after the user confirms via the email link.
  * Called when the original tab receives AUTH_CONFIRMED with type 'email_change'.
  */
-export async function completeSingleUserEmailChange(): Promise<{ error: string | null; newEmail: string | null }> {
+export async function completeSingleUserEmailChange(): Promise<{
+  error: string | null;
+  newEmail: string | null;
+}> {
   try {
     // Refresh session to get updated user data
     const { data, error: refreshError } = await supabase.auth.refreshSession();
     if (refreshError || !data.session) {
-      debugError('[SingleUser] Failed to refresh session after email change:', refreshError?.message);
+      debugError(
+        '[SingleUser] Failed to refresh session after email change:',
+        refreshError?.message
+      );
       return { error: 'Failed to refresh session after email change', newEmail: null };
     }
 
@@ -705,7 +730,7 @@ export async function completeSingleUserEmailChange(): Promise<{ error: string |
       if (creds) {
         await db.table('offlineCredentials').update('current_user', {
           email: newEmail,
-          cachedAt: new Date().toISOString(),
+          cachedAt: new Date().toISOString()
         });
       }
     } catch (e) {
@@ -718,7 +743,10 @@ export async function completeSingleUserEmailChange(): Promise<{ error: string |
     return { error: null, newEmail };
   } catch (e) {
     debugError('[SingleUser] Complete email change error:', e);
-    return { error: e instanceof Error ? e.message : 'Failed to complete email change', newEmail: null };
+    return {
+      error: e instanceof Error ? e.message : 'Failed to complete email change',
+      newEmail: null
+    };
   }
 }
 
@@ -773,7 +801,7 @@ export async function fetchRemoteGateConfig(): Promise<{
       email: data.email,
       gateType: data.gateType || 'code',
       codeLength: data.codeLength || 6,
-      profile: data.profile || {},
+      profile: data.profile || {}
     };
   } catch (e) {
     debugError('[SingleUser] fetchRemoteGateConfig error:', e);
@@ -799,7 +827,7 @@ export async function linkSingleUserDevice(
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
-      password: paddedPassword,
+      password: paddedPassword
     });
 
     if (error) {
@@ -828,7 +856,7 @@ export async function linkSingleUserDevice(
       profile,
       supabaseUserId: user.id,
       setupAt: now,
-      updatedAt: now,
+      updatedAt: now
     };
     await writeConfig(config);
 
@@ -845,7 +873,7 @@ export async function linkSingleUserDevice(
         return {
           error: null,
           deviceVerificationRequired: true,
-          maskedEmail: maskEmail(email),
+          maskedEmail: maskEmail(email)
         };
       }
       await touchTrustedDevice(user.id);

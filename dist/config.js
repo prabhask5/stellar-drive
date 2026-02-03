@@ -17,7 +17,7 @@ export function initEngine(config) {
     }
     // Handle database creation
     if (config.database) {
-        _dbReady = createDatabase(config.database).then(db => {
+        _dbReady = createDatabase(config.database).then((db) => {
             // Store on config for backward compat (engine.ts reads config.db)
             config.db = db;
         });
@@ -64,7 +64,7 @@ export function getTableMap() {
  */
 export function getTableColumns(supabaseName) {
     const config = getEngineConfig();
-    const table = config.tables.find(t => t.supabaseName === supabaseName);
+    const table = config.tables.find((t) => t.supabaseName === supabaseName);
     if (!table) {
         throw new Error(`Table ${supabaseName} not found in engine config`);
     }

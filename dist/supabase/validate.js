@@ -18,11 +18,17 @@ export async function validateSupabaseCredentials(url, anonKey, testTable) {
     try {
         const tempClient = createClient(url, anonKey);
         // Test REST API reachability by attempting a simple query
-        const { error } = await tempClient.from(testTable || '_health_check').select('id').limit(1);
+        const { error } = await tempClient
+            .from(testTable || '_health_check')
+            .select('id')
+            .limit(1);
         if (error) {
             // Bad credentials
             if (error.message?.includes('Invalid API key') || error.code === 'PGRST301') {
-                return { valid: false, error: 'Invalid Supabase credentials. Check your URL and Anon Key.' };
+                return {
+                    valid: false,
+                    error: 'Invalid Supabase credentials. Check your URL and Anon Key.'
+                };
             }
             // Table doesn't exist but API is reachable — credentials work, schema not set up yet
             if (error.message?.includes('relation') && error.message?.includes('does not exist')) {
@@ -48,7 +54,7 @@ export async function validateSupabaseCredentials(url, anonKey, testTable) {
  */
 export async function validateSchema() {
     const config = getEngineConfig();
-    const tableNames = config.tables.map(t => t.supabaseName);
+    const tableNames = config.tables.map((t) => t.supabaseName);
     // device verification requires the trusted_devices table
     if (config.auth?.deviceVerification?.enabled) {
         tableNames.push('trusted_devices');

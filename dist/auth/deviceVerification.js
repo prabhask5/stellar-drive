@@ -13,14 +13,8 @@ const DEFAULT_TRUST_DURATION_DAYS = 90;
 // ============================================================
 // HELPERS
 // ============================================================
-function getDb() {
-    const db = getEngineConfig().db;
-    if (!db)
-        throw new Error('Database not initialized.');
-    return db;
-}
 function getTrustDurationDays() {
-    return getEngineConfig().auth?.deviceVerification?.trustDurationDays ?? DEFAULT_TRUST_DURATION_DAYS;
+    return (getEngineConfig().auth?.deviceVerification?.trustDurationDays ?? DEFAULT_TRUST_DURATION_DAYS);
 }
 function snakeToCamelDevice(row) {
     return {
@@ -29,7 +23,7 @@ function snakeToCamelDevice(row) {
         deviceId: row.device_id,
         deviceLabel: row.device_label,
         trustedAt: row.trusted_at,
-        lastUsedAt: row.last_used_at,
+        lastUsedAt: row.last_used_at
     };
 }
 // ============================================================
@@ -125,14 +119,12 @@ export async function trustCurrentDevice(userId) {
         const deviceId = getDeviceId();
         const label = getDeviceLabel();
         const now = new Date().toISOString();
-        const { error } = await supabase
-            .from('trusted_devices')
-            .upsert({
+        const { error } = await supabase.from('trusted_devices').upsert({
             user_id: userId,
             device_id: deviceId,
             device_label: label,
             trusted_at: now,
-            last_used_at: now,
+            last_used_at: now
         }, { onConflict: 'user_id,device_id' });
         if (error) {
             debugError('[DeviceVerification] Trust device failed:', error.message);
@@ -190,10 +182,7 @@ export async function getTrustedDevices(userId) {
  */
 export async function removeTrustedDevice(id) {
     try {
-        const { error } = await supabase
-            .from('trusted_devices')
-            .delete()
-            .eq('id', id);
+        const { error } = await supabase.from('trusted_devices').delete().eq('id', id);
         if (error) {
             debugError('[DeviceVerification] Remove device failed:', error.message);
         }
@@ -221,11 +210,11 @@ export async function sendDeviceVerification(email) {
         const deviceId = getDeviceId();
         const deviceLabel = getDeviceLabel();
         await supabase.auth.updateUser({
-            data: { pending_device_id: deviceId, pending_device_label: deviceLabel },
+            data: { pending_device_id: deviceId, pending_device_label: deviceLabel }
         });
         const { error } = await supabase.auth.signInWithOtp({
             email,
-            options: { shouldCreateUser: false },
+            options: { shouldCreateUser: false }
         });
         if (error) {
             debugError('[DeviceVerification] Send OTP failed:', error.message);
@@ -262,14 +251,12 @@ export async function trustPendingDevice() {
         }
         const now = new Date().toISOString();
         // Trust the originating device
-        const { error: upsertError } = await supabase
-            .from('trusted_devices')
-            .upsert({
+        const { error: upsertError } = await supabase.from('trusted_devices').upsert({
             user_id: user.id,
             device_id: pendingDeviceId,
             device_label: pendingDeviceLabel || 'Unknown device',
             trusted_at: now,
-            last_used_at: now,
+            last_used_at: now
         }, { onConflict: 'user_id,device_id' });
         if (upsertError) {
             debugError('[DeviceVerification] trustPendingDevice upsert failed:', upsertError.message);
@@ -281,7 +268,7 @@ export async function trustPendingDevice() {
         await trustCurrentDevice(user.id);
         // Clear pending device from metadata
         await supabase.auth.updateUser({
-            data: { pending_device_id: null, pending_device_label: null },
+            data: { pending_device_id: null, pending_device_label: null }
         });
     }
     catch (e) {
@@ -295,7 +282,7 @@ export async function verifyDeviceCode(tokenHash) {
     try {
         const { error } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
-            type: 'email',
+            type: 'email'
         });
         if (error) {
             debugError('[DeviceVerification] Verify OTP failed:', error.message);

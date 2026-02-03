@@ -94,7 +94,7 @@ export async function engineBatchWrite(operations) {
     for (const op of operations) {
         tableNames.add(getDexieTableName(op.table));
     }
-    const tables = Array.from(tableNames).map(name => db.table(name));
+    const tables = Array.from(tableNames).map((name) => db.table(name));
     const modifiedIds = [];
     await db.transaction('rw', tables, async () => {
         for (const op of operations) {
@@ -232,7 +232,10 @@ export async function engineGetAll(table, opts) {
     else {
         results = await db.table(dexieTable).toArray();
     }
-    if (results.length === 0 && opts?.remoteFallback && typeof navigator !== 'undefined' && navigator.onLine) {
+    if (results.length === 0 &&
+        opts?.remoteFallback &&
+        typeof navigator !== 'undefined' &&
+        navigator.onLine) {
         try {
             const columns = getTableColumns(table);
             const { data, error } = await supabase
@@ -261,8 +264,15 @@ export async function engineGetAll(table, opts) {
 export async function engineQuery(table, index, value, opts) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
-    let results = await db.table(dexieTable).where(index).equals(value).toArray();
-    if (results.length === 0 && opts?.remoteFallback && typeof navigator !== 'undefined' && navigator.onLine) {
+    let results = await db
+        .table(dexieTable)
+        .where(index)
+        .equals(value)
+        .toArray();
+    if (results.length === 0 &&
+        opts?.remoteFallback &&
+        typeof navigator !== 'undefined' &&
+        navigator.onLine) {
         try {
             const columns = getTableColumns(table);
             const { data, error } = await supabase
@@ -288,7 +298,10 @@ export async function engineQueryRange(table, index, lower, upper, opts) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
     let results = await db.table(dexieTable).where(index).between(lower, upper, true, true).toArray();
-    if (results.length === 0 && opts?.remoteFallback && typeof navigator !== 'undefined' && navigator.onLine) {
+    if (results.length === 0 &&
+        opts?.remoteFallback &&
+        typeof navigator !== 'undefined' &&
+        navigator.onLine) {
         try {
             const columns = getTableColumns(table);
             const { data, error } = await supabase
@@ -316,7 +329,11 @@ export async function engineGetOrCreate(table, index, value, defaults, opts) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
     // Check local first
-    const localResults = await db.table(dexieTable).where(index).equals(value).toArray();
+    const localResults = await db
+        .table(dexieTable)
+        .where(index)
+        .equals(value)
+        .toArray();
     const existing = localResults.find((r) => !r.deleted);
     if (existing)
         return existing;

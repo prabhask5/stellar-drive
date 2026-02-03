@@ -12,7 +12,13 @@ import { debugLog, debugError } from '../debug';
 interface OfflineLoginResult {
   success: boolean;
   error?: string;
-  reason?: 'no_credentials' | 'no_stored_password' | 'user_mismatch' | 'email_mismatch' | 'password_mismatch' | 'session_failed';
+  reason?:
+    | 'no_credentials'
+    | 'no_stored_password'
+    | 'user_mismatch'
+    | 'email_mismatch'
+    | 'password_mismatch'
+    | 'session_failed';
 }
 
 /**
@@ -24,10 +30,7 @@ interface OfflineLoginResult {
  * 4. Validates session was persisted
  * 5. Returns structured result with typed error reasons
  */
-export async function signInOffline(
-  email: string,
-  password: string
-): Promise<OfflineLoginResult> {
+export async function signInOffline(email: string, password: string): Promise<OfflineLoginResult> {
   try {
     // 1. Get cached credentials
     const credentials = await getOfflineCredentials();

@@ -54,7 +54,8 @@ export async function signIn(email: string, password: string): Promise<AuthRespo
     // Check device verification for multi-user mode
     const config = getEngineConfig();
     if (config.auth?.deviceVerification?.enabled) {
-      const { isDeviceTrusted, touchTrustedDevice, sendDeviceVerification, maskEmail } = await import('../auth/deviceVerification');
+      const { isDeviceTrusted, touchTrustedDevice, sendDeviceVerification, maskEmail } =
+        await import('../auth/deviceVerification');
       const trusted = await isDeviceTrusted(data.user.id);
 
       if (!trusted) {
@@ -66,7 +67,7 @@ export async function signIn(email: string, password: string): Promise<AuthRespo
           session: null,
           error: null,
           deviceVerificationRequired: true,
-          maskedEmail,
+          maskedEmail
         };
       }
 
@@ -359,7 +360,10 @@ export async function changeEmail(
  * Complete email change after the user confirms via the email link.
  * Refreshes session to pick up the new email and updates offline credentials.
  */
-export async function completeEmailChange(): Promise<{ error: string | null; newEmail: string | null }> {
+export async function completeEmailChange(): Promise<{
+  error: string | null;
+  newEmail: string | null;
+}> {
   const { data, error: refreshError } = await supabase.auth.refreshSession();
   if (refreshError || !data.session) {
     return { error: refreshError?.message || 'Failed to refresh session', newEmail: null };
@@ -378,7 +382,7 @@ export async function completeEmailChange(): Promise<{ error: string | null; new
       if (existing) {
         await db.table('offlineCredentials').update('current_user', {
           email: newEmail,
-          cachedAt: new Date().toISOString(),
+          cachedAt: new Date().toISOString()
         });
       }
     }

@@ -11,14 +11,32 @@ export { startSyncEngine, runFullSync } from './engine';
 export { onSyncComplete } from './engine';
 
 // Generic CRUD operations
-export { engineCreate, engineUpdate, engineDelete, engineBatchWrite, engineIncrement } from './data';
+export {
+  engineCreate,
+  engineUpdate,
+  engineDelete,
+  engineBatchWrite,
+  engineIncrement
+} from './data';
 export type { BatchOperation } from './data';
 
 // Generic query operations
 export { engineGet, engineGetAll, engineQuery, engineQueryRange, engineGetOrCreate } from './data';
 
 // Auth
-export { signIn, signUp, signOut, changePassword, changeEmail, completeEmailChange, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
+export {
+  signIn,
+  signUp,
+  signOut,
+  changePassword,
+  changeEmail,
+  completeEmailChange,
+  resendConfirmationEmail,
+  getUserProfile,
+  updateProfile,
+  verifyOtp,
+  getValidSession
+} from './supabase/auth';
 export type { AuthResponse } from './supabase/auth';
 
 // Auth lifecycle
@@ -32,10 +50,38 @@ export { isAdmin } from './auth/admin';
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 
 // Single-user auth
-export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from './auth/singleUser';
+export {
+  isSingleUserSetUp,
+  getSingleUserInfo,
+  setupSingleUser,
+  unlockSingleUser,
+  lockSingleUser,
+  changeSingleUserGate,
+  updateSingleUserProfile,
+  resetSingleUser,
+  completeSingleUserSetup,
+  completeDeviceVerification,
+  pollDeviceVerification,
+  padPin,
+  changeSingleUserEmail,
+  completeSingleUserEmailChange,
+  fetchRemoteGateConfig,
+  linkSingleUserDevice,
+  resetSingleUserRemote
+} from './auth/singleUser';
 
 // Device verification
-export { isDeviceTrusted, trustCurrentDevice, trustPendingDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';
+export {
+  isDeviceTrusted,
+  trustCurrentDevice,
+  trustPendingDevice,
+  getTrustedDevices,
+  removeTrustedDevice,
+  maskEmail,
+  sendDeviceVerification,
+  getCurrentDeviceId,
+  getDeviceLabel
+} from './auth/deviceVerification';
 
 // Stores
 export { syncStatusStore } from './stores/sync';
@@ -65,7 +111,18 @@ export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 
 // Types
-export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice } from './types';
+export type {
+  SyncOperationItem,
+  OperationType,
+  OfflineCredentials,
+  OfflineSession,
+  ConflictHistoryEntry,
+  SyncStatus,
+  AuthMode,
+  SingleUserConfig,
+  SingleUserGateType,
+  TrustedDevice
+} from './types';
 
 // Re-export Session type from Supabase so consumers don't need a direct dependency
 export type { Session } from '@supabase/supabase-js';

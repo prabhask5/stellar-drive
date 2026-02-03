@@ -162,7 +162,7 @@ async function handleRealtimeChange(table, payload) {
         return;
     }
     debugLog(`[Realtime] Processing remote change: ${eventType} ${table}/${entityId}`);
-    const tableConfig = getEngineConfig().tables.find(t => t.supabaseName === table);
+    const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === table);
     const dexieTable = tableConfig ? getDexieTableFor(tableConfig) : undefined;
     if (!dexieTable) {
         debugWarn('[Realtime] Unknown table:', table);
@@ -247,7 +247,7 @@ async function handleRealtimeChange(table, payload) {
                 if (changedFields.length > 0 || !localEntity) {
                     remoteChangesStore.recordRemoteChange(entityId, table, changedFields.length > 0 ? changedFields : ['*'], applied, eventType, valueDelta);
                     // Call table-specific onRemoteChange hook if configured
-                    const tblConfig = getEngineConfig().tables.find(t => t.supabaseName === table);
+                    const tblConfig = getEngineConfig().tables.find((t) => t.supabaseName === table);
                     if (tblConfig?.onRemoteChange) {
                         tblConfig.onRemoteChange(table, newRecord);
                     }
@@ -372,7 +372,7 @@ export async function startRealtimeSubscriptions(userId) {
         state.deviceId = getDeviceId();
         setConnectionState('connecting');
         const config = getEngineConfig();
-        const realtimeTables = config.tables.map(t => t.supabaseName);
+        const realtimeTables = config.tables.map((t) => t.supabaseName);
         // Create a single channel for all tables
         // Using a unique channel name per user
         const channelName = `${config.prefix}_sync_${userId}`;

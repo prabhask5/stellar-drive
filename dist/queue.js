@@ -292,7 +292,8 @@ function shouldRetryItem(item) {
 }
 export async function getPendingSync() {
     const db = getDb();
-    const allItems = (await db.table('syncQueue')
+    const allItems = (await db
+        .table('syncQueue')
         .orderBy('timestamp')
         .toArray());
     // Filter to only items that should be retried (haven't exceeded max retries and backoff has passed)

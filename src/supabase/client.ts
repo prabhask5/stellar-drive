@@ -116,9 +116,7 @@ function getOrCreateClient(): SupabaseClient {
   const key = config?.supabaseAnonKey || 'placeholder';
 
   if (!config) {
-    debugWarn(
-      'Supabase config not loaded yet. Call initConfig() before using supabase client.'
-    );
+    debugWarn('Supabase config not loaded yet. Call initConfig() before using supabase client.');
   }
 
   realClient = createClient(url, key, {
@@ -179,4 +177,3 @@ export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
     return value;
   }
 });
-

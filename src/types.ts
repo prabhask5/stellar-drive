@@ -101,15 +101,15 @@ export type AuthMode = 'supabase' | 'offline' | 'none';
 export type SingleUserGateType = 'code' | 'password';
 
 export interface SingleUserConfig {
-  id: string;                    // 'config' — singleton
+  id: string; // 'config' — singleton
   gateType: SingleUserGateType;
-  codeLength?: 4 | 6;           // only when gateType === 'code'
-  gateHash?: string;             // SHA-256 of the code/password (deprecated — kept for offline fallback)
-  email?: string;                // Real email for Supabase email/password auth
+  codeLength?: 4 | 6; // only when gateType === 'code'
+  gateHash?: string; // SHA-256 of the code/password (deprecated — kept for offline fallback)
+  email?: string; // Real email for Supabase email/password auth
   profile: Record<string, unknown>; // { firstName, lastName }
-  supabaseUserId?: string;       // user's ID (set after first online setup)
-  setupAt: string;               // ISO timestamp
-  updatedAt: string;             // ISO timestamp
+  supabaseUserId?: string; // user's ID (set after first online setup)
+  setupAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp
 }
 
 export interface TrustedDevice {

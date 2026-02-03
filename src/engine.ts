@@ -51,7 +51,8 @@ import { validateSchema } from './supabase/validate';
 // Helper functions for config-driven access
 function getDb() {
   const db = getEngineConfig().db;
-  if (!db) throw new Error('Database not initialized. Provide db or database config to initEngine().');
+  if (!db)
+    throw new Error('Database not initialized. Provide db or database config to initEngine().');
   return db;
 }
 function getSupabase() {
@@ -61,15 +62,15 @@ function getSupabase() {
   return supabaseProxy;
 }
 function getDexieTableName(supabaseName: string): string {
-  const table = getEngineConfig().tables.find(t => t.supabaseName === supabaseName);
+  const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
   return table ? getDexieTableFor(table) : supabaseName;
 }
 function getColumns(supabaseName: string): string {
-  const table = getEngineConfig().tables.find(t => t.supabaseName === supabaseName);
+  const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
   return table?.columns || '*';
 }
 function isSingletonTable(supabaseName: string): boolean {
-  const table = getEngineConfig().tables.find(t => t.supabaseName === supabaseName);
+  const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
   return table?.isSingleton || false;
 }
 
@@ -373,7 +374,9 @@ async function acquireSyncLock(): Promise<boolean> {
   // If lock is held, check if it's stale (held too long)
   if (lockPromise !== null) {
     if (lockAcquiredAt && Date.now() - lockAcquiredAt > SYNC_LOCK_TIMEOUT_MS) {
-      debugWarn(`[SYNC] Force-releasing stale sync lock (held for ${Math.round((Date.now() - lockAcquiredAt) / 1000)}s)`);
+      debugWarn(
+        `[SYNC] Force-releasing stale sync lock (held for ${Math.round((Date.now() - lockAcquiredAt) / 1000)}s)`
+      );
       releaseSyncLock();
     } else {
       return false;
@@ -405,8 +408,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
       reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
     }, ms);
     promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); }
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
     );
   });
 }
@@ -419,9 +428,7 @@ export function onSyncComplete(callback: () => void): () => void {
   debugLog(`[SYNC] Store registered for sync complete (total: ${syncCompleteCallbacks.size})`);
   return () => {
     syncCompleteCallbacks.delete(callback);
-    debugLog(
-      `[SYNC] Store unregistered from sync complete (total: ${syncCompleteCallbacks.size})`
-    );
+    debugLog(`[SYNC] Store unregistered from sync complete (total: ${syncCompleteCallbacks.size})`);
   };
 }
 
@@ -452,7 +459,7 @@ export function scheduleSyncPush(): void {
     if (skipPull) {
       debugLog('[SYNC] Realtime healthy - push-only mode (skipping pull)');
     }
-    runFullSync(false, skipPull).catch(e => debugError('[SYNC] Push-triggered sync failed:', e)); // Show syncing indicator for user-triggered writes
+    runFullSync(false, skipPull).catch((e) => debugError('[SYNC] Push-triggered sync failed:', e)); // Show syncing indicator for user-triggered writes
   }, getSyncDebounceMs());
 }
 
@@ -500,7 +507,11 @@ async function getCurrentUserId(): Promise<string | null> {
     // EGRESS OPTIMIZATION: Only validate with getUser() (network call) once per hour.
     // Between validations, trust the cached session.
     const now = Date.now();
-    if (lastValidatedUserId && session.user?.id === lastValidatedUserId && (now - lastUserValidation) < USER_VALIDATION_INTERVAL_MS) {
+    if (
+      lastValidatedUserId &&
+      session.user?.id === lastValidatedUserId &&
+      now - lastUserValidation < USER_VALIDATION_INTERVAL_MS
+    ) {
       return session.user.id;
     }
 
@@ -592,7 +603,7 @@ async function forceFullSync(): Promise<void> {
     await resetSyncCursor();
 
     // Clear local data (except sync queue - keep pending changes)
-    const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
+    const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
     await db.transaction('rw', entityTables, async () => {
       for (const t of entityTables) {
         await t.clear();
@@ -654,11 +665,20 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
 
   // Pull all tables in parallel (egress optimization: reduces wall time per sync cycle)
   // Wrapped in timeout to prevent hanging if Supabase doesn't respond
-  const results = await withTimeout(Promise.all(
-    config.tables.map(table =>
-      supabase.from(table.supabaseName).select(table.columns).gt('updated_at', lastSync).order('updated_at', { ascending: true }).order('id', { ascending: true })
-    )
-  ), 30_000, 'Pull remote changes');
+  const results = await withTimeout(
+    Promise.all(
+      config.tables.map((table) =>
+        supabase
+          .from(table.supabaseName)
+          .select(table.columns)
+          .gt('updated_at', lastSync)
+          .order('updated_at', { ascending: true })
+          .order('id', { ascending: true })
+      )
+    ),
+    30_000,
+    'Pull remote changes'
+  );
 
   // Check for errors
   for (let i = 0; i < results.length; i++) {
@@ -666,7 +686,7 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   }
 
   // Track egress
-  const tableNames = config.tables.map(t => t.supabaseName);
+  const tableNames = config.tables.map((t) => t.supabaseName);
   for (let i = 0; i < config.tables.length; i++) {
     const egress = trackEgress(tableNames[i], results[i].data);
     pullBytes += egress.bytes;
@@ -742,10 +762,10 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   debugLog(`[SYNC] Pulled from server:`, pullSummary);
 
   // Apply changes to local DB with conflict handling
-  const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
+  const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
 
   // Check if any table has data to process (avoid opening transaction on empty pull)
-  const hasData = results.some(r => r.data && r.data.length > 0);
+  const hasData = results.some((r) => r.data && r.data.length > 0);
 
   if (hasData) {
     await db.transaction(
@@ -839,7 +859,9 @@ async function pushPendingOps(): Promise<PushStats> {
         if (item.id) {
           const stillQueued = await db.table('syncQueue').get(item.id);
           if (!stillQueued) {
-            debugLog(`[SYNC] Skipping purged item: ${item.operationType} ${item.table}/${item.entityId}`);
+            debugLog(
+              `[SYNC] Skipping purged item: ${item.operationType} ${item.table}/${item.entityId}`
+            );
             continue;
           }
         }
@@ -852,10 +874,7 @@ async function pushPendingOps(): Promise<PushStats> {
           debugLog(`[SYNC] Success: ${item.operationType} ${item.table}/${item.entityId}`);
         }
       } catch (error) {
-        debugError(
-          `[SYNC] Failed: ${item.operationType} ${item.table}/${item.entityId}:`,
-          error
-        );
+        debugError(`[SYNC] Failed: ${item.operationType} ${item.table}/${item.entityId}:`, error);
 
         // Determine if this is a transient error that will likely succeed on retry
         const transient = isTransientError(error);
@@ -996,10 +1015,7 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
             await db.table(dexieTable).delete(entityId);
             await db.table(dexieTable).put(existing);
             // Purge any queued operations referencing the old ID
-            await db.table('syncQueue')
-              .where('entityId')
-              .equals(entityId)
-              .delete();
+            await db.table('syncQueue').where('entityId').equals(entityId).delete();
           }
         }
         break;
@@ -1142,10 +1158,7 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
               const merged = { ...serverRow, ...updatePayload, id: serverRow.id };
               await db.table(dexieTable).put(merged);
               // Purge any remaining queued operations referencing the old ID
-              await db.table('syncQueue')
-                .where('entityId')
-                .equals(entityId)
-                .delete();
+              await db.table('syncQueue').where('entityId').equals(entityId).delete();
 
               if (retryError) throw retryError;
               break;
@@ -1249,7 +1262,10 @@ function parseErrorMessage(error: unknown): string {
 
 // Full sync: push first (so our changes are persisted), then pull
 // quiet: if true, don't update UI status at all (for background periodic syncs)
-export async function runFullSync(quiet: boolean = false, skipPull: boolean = false): Promise<void> {
+export async function runFullSync(
+  quiet: boolean = false,
+  skipPull: boolean = false
+): Promise<void> {
   if (typeof navigator === 'undefined' || !navigator.onLine) {
     if (!quiet) {
       syncStatusStore.setStatus('offline');
@@ -1274,9 +1290,7 @@ export async function runFullSync(quiet: boolean = false, skipPull: boolean = fa
   // This causes the "sync succeeded but nothing synced" bug
   const userId = await getCurrentUserId();
   if (!userId) {
-    debugWarn(
-      '[SYNC] No authenticated user - cannot sync. RLS would silently block all writes.'
-    );
+    debugWarn('[SYNC] No authenticated user - cannot sync. RLS would silently block all writes.');
     if (!quiet) {
       syncStatusStore.setStatus('error');
       syncStatusStore.setError('Not signed in', 'Please sign in to sync your data.');
@@ -1310,7 +1324,11 @@ export async function runFullSync(quiet: boolean = false, skipPull: boolean = fa
 
     // Push first so local changes are persisted
     // Note: pushPendingOps coalesces before pushing, so actual requests are lower
-    const pushStats = await withTimeout(pushPendingOps(), SYNC_OPERATION_TIMEOUT_MS, 'Push pending ops');
+    const pushStats = await withTimeout(
+      pushPendingOps(),
+      SYNC_OPERATION_TIMEOUT_MS,
+      'Push pending ops'
+    );
     pushedItems = pushStats.actualPushed;
     pushSucceeded = true;
 
@@ -1336,7 +1354,11 @@ export async function runFullSync(quiet: boolean = false, skipPull: boolean = fa
         try {
           // Don't pass postPushCursor - we want ALL changes since stored cursor
           // The conflict resolution handles our own pushed changes via device_id check
-          pullEgress = await withTimeout(pullRemoteChanges(), SYNC_OPERATION_TIMEOUT_MS, 'Pull remote changes');
+          pullEgress = await withTimeout(
+            pullRemoteChanges(),
+            SYNC_OPERATION_TIMEOUT_MS,
+            'Pull remote changes'
+          );
           pullSucceeded = true;
         } catch (pullError) {
           lastPullError = pullError;
@@ -1481,7 +1503,7 @@ async function reconcileLocalWithRemote(): Promise<number> {
           table: tableConfig.supabaseName,
           entityId: item.id,
           operationType: item.deleted ? 'delete' : 'create',
-          value: item.deleted ? undefined : payload,
+          value: item.deleted ? undefined : payload
         });
         requeued++;
       }
@@ -1546,8 +1568,11 @@ async function hydrateFromRemote(): Promise<void> {
     // Pull all non-deleted records from each table (explicit columns for egress optimization)
     // Filter deleted = false OR deleted IS NULL to exclude tombstones
     const results = await Promise.all(
-      config.tables.map(table =>
-        supabase.from(table.supabaseName).select(table.columns).or('deleted.is.null,deleted.eq.false')
+      config.tables.map((table) =>
+        supabase
+          .from(table.supabaseName)
+          .select(table.columns)
+          .or('deleted.is.null,deleted.eq.false')
       )
     );
 
@@ -1582,7 +1607,7 @@ async function hydrateFromRemote(): Promise<void> {
     }
 
     // Store everything locally
-    const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
+    const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
     await db.transaction('rw', entityTables, async () => {
       for (let i = 0; i < config.tables.length; i++) {
         const data = results[i].data;
@@ -1636,15 +1661,20 @@ async function cleanupLocalTombstones(): Promise<number> {
   let totalDeleted = 0;
 
   try {
-    const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
+    const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
     await db.transaction('rw', entityTables, async () => {
       for (const tableConfig of config.tables) {
         const table = db.table(getDexieTableFor(tableConfig));
         const count = await table
-          .filter((item: Record<string, unknown>) => item.deleted === true && (item.updated_at as string) < cutoffStr)
+          .filter(
+            (item: Record<string, unknown>) =>
+              item.deleted === true && (item.updated_at as string) < cutoffStr
+          )
           .delete();
         if (count > 0) {
-          debugLog(`[Tombstone] Cleaned ${count} old records from local ${getDexieTableFor(tableConfig)}`);
+          debugLog(
+            `[Tombstone] Cleaned ${count} old records from local ${getDexieTableFor(tableConfig)}`
+          );
           totalDeleted += count;
         }
       }
@@ -1692,7 +1722,9 @@ async function cleanupServerTombstones(force = false): Promise<number> {
       if (error) {
         debugError(`[Tombstone] Failed to cleanup ${tableConfig.supabaseName}:`, error.message);
       } else if (data && data.length > 0) {
-        debugLog(`[Tombstone] Cleaned ${data.length} old records from server ${tableConfig.supabaseName}`);
+        debugLog(
+          `[Tombstone] Cleaned ${data.length} old records from server ${tableConfig.supabaseName}`
+        );
         totalDeleted += data.length;
       }
     }
@@ -1717,10 +1749,7 @@ async function cleanupOldTombstones(): Promise<{ local: number; server: number }
 }
 
 // Debug function to check tombstone status and manually trigger cleanup
-async function debugTombstones(options?: {
-  cleanup?: boolean;
-  force?: boolean;
-}): Promise<void> {
+async function debugTombstones(options?: { cleanup?: boolean; force?: boolean }): Promise<void> {
   const tombstoneMaxAgeDays = getTombstoneMaxAgeDays();
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - tombstoneMaxAgeDays);
@@ -1913,7 +1942,7 @@ export async function startSyncEngine(): Promise<void> {
           startRealtimeSubscriptions(session.user.id);
         }
         // Run a sync to push any pending changes
-        runFullSync(false).catch(e => debugError('[SYNC] Auth-triggered sync failed:', e));
+        runFullSync(false).catch((e) => debugError('[SYNC] Auth-triggered sync failed:', e));
       }
     }
 
@@ -1941,8 +1970,13 @@ export async function startSyncEngine(): Promise<void> {
       }
 
       // SECURITY: Only create offline session if credentials match current user
-      if (credentials.userId !== currentSession.user.id || credentials.email !== currentSession.user.email) {
-        debugWarn('[Engine] Cached credentials do not match current user - skipping offline session creation');
+      if (
+        credentials.userId !== currentSession.user.id ||
+        credentials.email !== currentSession.user.email
+      ) {
+        debugWarn(
+          '[Engine] Cached credentials do not match current user - skipping offline session creation'
+        );
         return;
       }
 
@@ -1965,7 +1999,10 @@ export async function startSyncEngine(): Promise<void> {
       // Re-validate with Supabase with 15s timeout
       const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
       const validationPromise = (async () => {
-        const { data: { user }, error } = await getSupabase().auth.getUser();
+        const {
+          data: { user },
+          error
+        } = await getSupabase().auth.getUser();
         if (error || !user) return null;
         return user;
       })();
@@ -1978,9 +2015,11 @@ export async function startSyncEngine(): Promise<void> {
         // Trigger sync after successful auth validation (with egress cooldown)
         const timeSinceLastSync = Date.now() - lastSuccessfulSyncTimestamp;
         if (timeSinceLastSync < getOnlineReconnectCooldownMs()) {
-          debugLog(`[SYNC] Skipping reconnect sync (last sync ${Math.round(timeSinceLastSync / 1000)}s ago)`);
+          debugLog(
+            `[SYNC] Skipping reconnect sync (last sync ${Math.round(timeSinceLastSync / 1000)}s ago)`
+          );
         } else {
-          runFullSync(false).catch(e => debugError('[SYNC] Reconnect sync failed:', e));
+          runFullSync(false).catch((e) => debugError('[SYNC] Reconnect sync failed:', e));
         }
       } else {
         debugWarn('[Engine] Auth validation failed on reconnect');
@@ -2067,7 +2106,7 @@ export async function startSyncEngine(): Promise<void> {
       // Debounce to prevent rapid syncs when user quickly switches tabs
       visibilityDebounceTimeout = setTimeout(() => {
         visibilityDebounceTimeout = null;
-        runFullSync(true).catch(e => debugError('[SYNC] Visibility sync failed:', e)); // Quiet - no error shown if it fails
+        runFullSync(true).catch((e) => debugError('[SYNC] Visibility sync failed:', e)); // Quiet - no error shown if it fails
       }, VISIBILITY_SYNC_DEBOUNCE_MS);
     }
   };
@@ -2108,7 +2147,7 @@ export async function startSyncEngine(): Promise<void> {
     // Only run periodic sync if tab is visible and online
     // Skip if realtime is healthy (reduces egress significantly)
     if (navigator.onLine && isTabVisible && !isRealtimeHealthy()) {
-      runFullSync(true).catch(e => debugError('[SYNC] Periodic sync failed:', e)); // Quiet background sync
+      runFullSync(true).catch((e) => debugError('[SYNC] Periodic sync failed:', e)); // Quiet background sync
     }
 
     // Cleanup old tombstones, conflict history, failed sync items, and recently modified cache
@@ -2132,22 +2171,27 @@ export async function startSyncEngine(): Promise<void> {
   // One-time schema validation (only when online, only first run)
   if (navigator.onLine && !_schemaValidated) {
     _schemaValidated = true;
-    validateSchema().then(result => {
-      if (!result.valid) {
-        const msg = `Missing or inaccessible Supabase tables: ${result.missingTables.length > 0 ? result.missingTables.join(', ') : 'see errors'}`;
-        debugError('[SYNC]', msg);
-        for (const err of result.errors) {
-          debugError('[SYNC]', err);
+    validateSchema()
+      .then((result) => {
+        if (!result.valid) {
+          const msg = `Missing or inaccessible Supabase tables: ${result.missingTables.length > 0 ? result.missingTables.join(', ') : 'see errors'}`;
+          debugError('[SYNC]', msg);
+          for (const err of result.errors) {
+            debugError('[SYNC]', err);
+          }
+          syncStatusStore.setStatus('error');
+          syncStatusStore.setError(
+            msg,
+            'Create the required tables in your Supabase project. See stellar-engine README for the required SQL schema.'
+          );
         }
-        syncStatusStore.setStatus('error');
-        syncStatusStore.setError(msg, 'Create the required tables in your Supabase project. See stellar-engine README for the required SQL schema.');
-      }
-    }).catch(() => {});
+      })
+      .catch(() => {});
   }
 
   // Initial sync: hydrate if empty, otherwise push pending
   if (navigator.onLine) {
-    hydrateFromRemote().catch(e => debugError('[SYNC] Initial hydration failed:', e));
+    hydrateFromRemote().catch((e) => debugError('[SYNC] Initial hydration failed:', e));
   }
 
   // Run initial cleanup
@@ -2171,12 +2215,14 @@ export async function startSyncEngine(): Promise<void> {
   watchdogInterval = setInterval(() => {
     // If the sync lock has been held for too long, force-release and retry
     if (lockAcquiredAt && Date.now() - lockAcquiredAt > SYNC_LOCK_TIMEOUT_MS) {
-      debugWarn(`[SYNC] Watchdog: sync lock stuck for ${Math.round((Date.now() - lockAcquiredAt) / 1000)}s - force-releasing and retrying`);
+      debugWarn(
+        `[SYNC] Watchdog: sync lock stuck for ${Math.round((Date.now() - lockAcquiredAt) / 1000)}s - force-releasing and retrying`
+      );
       releaseSyncLock();
       syncStatusStore.setStatus('idle');
       // Auto-retry after force-release
       if (navigator.onLine) {
-        runFullSync(true).catch(e => debugError('[SYNC] Watchdog retry sync failed:', e));
+        runFullSync(true).catch((e) => debugError('[SYNC] Watchdog retry sync failed:', e));
       }
     }
   }, WATCHDOG_INTERVAL_MS);
@@ -2290,7 +2336,7 @@ export async function clearLocalCache(): Promise<void> {
   // Get user ID before clearing to remove their sync cursor
   const userId = await getCurrentUserId();
 
-  const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
+  const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
   const metaTables = [db.table('syncQueue'), db.table('conflictHistory')];
   await db.transaction('rw', [...entityTables, ...metaTables], async () => {
     for (const t of entityTables) {
@@ -2311,5 +2357,3 @@ export async function clearLocalCache(): Promise<void> {
   }
   _hasHydrated = false;
 }
-
-

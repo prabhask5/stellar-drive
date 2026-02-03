@@ -47,7 +47,7 @@ export async function signIn(email, password) {
                     session: null,
                     error: null,
                     deviceVerificationRequired: true,
-                    maskedEmail,
+                    maskedEmail
                 };
             }
             await touchTrustedDevice(data.user.id);
@@ -311,7 +311,7 @@ export async function completeEmailChange() {
             if (existing) {
                 await db.table('offlineCredentials').update('current_user', {
                     email: newEmail,
-                    cachedAt: new Date().toISOString(),
+                    cachedAt: new Date().toISOString()
                 });
             }
         }

@@ -114,7 +114,7 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
       return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
     }
 
-    const config = await db.table('singleUserConfig').get('config') as SingleUserConfig | null;
+    const config = (await db.table('singleUserConfig').get('config')) as SingleUserConfig | null;
 
     if (!config) {
       // No local config — user hasn't set up on this device.

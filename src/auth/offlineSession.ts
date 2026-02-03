@@ -62,4 +62,3 @@ export async function clearOfflineSession(): Promise<void> {
   const db = getEngineConfig().db!;
   await db.table('offlineSession').delete(SESSION_ID);
 }
-

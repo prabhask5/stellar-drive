@@ -54,7 +54,7 @@ export interface ConflictResolution {
  */
 function getExcludedFields(entityType: string): Set<string> {
   const defaultExcluded = new Set(['id', 'user_id', 'created_at', '_version']);
-  const tableConfig = getEngineConfig().tables.find(t => t.supabaseName === entityType);
+  const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
   return new Set([...defaultExcluded, ...(tableConfig?.excludeFromConflict || [])]);
 }
 
@@ -62,7 +62,7 @@ function getExcludedFields(entityType: string): Set<string> {
  * Get numeric merge fields for a given entity type from per-table config.
  */
 function getNumericMergeFields(entityType: string): Set<string> {
-  const tableConfig = getEngineConfig().tables.find(t => t.supabaseName === entityType);
+  const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
   return new Set(tableConfig?.numericMergeFields || []);
 }
 
@@ -382,7 +382,11 @@ export async function storeConflictHistory(resolution: ConflictResolution): Prom
  * @returns Array of pending operations for this entity
  */
 export async function getPendingOpsForEntity(entityId: string): Promise<SyncOperationItem[]> {
-  const allPending = await getEngineConfig().db!.table('syncQueue').where('entityId').equals(entityId).toArray();
+  const allPending = await getEngineConfig()
+    .db!.table('syncQueue')
+    .where('entityId')
+    .equals(entityId)
+    .toArray();
   return allPending as unknown as SyncOperationItem[];
 }
 
@@ -395,7 +399,10 @@ export async function cleanupConflictHistory(): Promise<number> {
   const cutoffStr = cutoffDate.toISOString();
 
   try {
-    const count = await getEngineConfig().db!.table('conflictHistory').filter((entry: ConflictHistoryEntry) => entry.timestamp < cutoffStr).delete();
+    const count = await getEngineConfig()
+      .db!.table('conflictHistory')
+      .filter((entry: ConflictHistoryEntry) => entry.timestamp < cutoffStr)
+      .delete();
 
     if (count > 0) {
       debugLog(`[Conflict] Cleaned up ${count} old conflict history entries`);
@@ -407,4 +414,3 @@ export async function cleanupConflictHistory(): Promise<number> {
     return 0;
   }
 }
-

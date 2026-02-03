@@ -21,14 +21,14 @@ import { getDeviceId } from './deviceId';
  */
 function getExcludedFields(entityType) {
     const defaultExcluded = new Set(['id', 'user_id', 'created_at', '_version']);
-    const tableConfig = getEngineConfig().tables.find(t => t.supabaseName === entityType);
+    const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
     return new Set([...defaultExcluded, ...(tableConfig?.excludeFromConflict || [])]);
 }
 /**
  * Get numeric merge fields for a given entity type from per-table config.
  */
 function getNumericMergeFields(entityType) {
-    const tableConfig = getEngineConfig().tables.find(t => t.supabaseName === entityType);
+    const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
     return new Set(tableConfig?.numericMergeFields || []);
 }
 /**
@@ -296,7 +296,11 @@ export async function storeConflictHistory(resolution) {
  * @returns Array of pending operations for this entity
  */
 export async function getPendingOpsForEntity(entityId) {
-    const allPending = await getEngineConfig().db.table('syncQueue').where('entityId').equals(entityId).toArray();
+    const allPending = await getEngineConfig()
+        .db.table('syncQueue')
+        .where('entityId')
+        .equals(entityId)
+        .toArray();
     return allPending;
 }
 /**
@@ -307,7 +311,10 @@ export async function cleanupConflictHistory() {
     cutoffDate.setDate(cutoffDate.getDate() - 30);
     const cutoffStr = cutoffDate.toISOString();
     try {
-        const count = await getEngineConfig().db.table('conflictHistory').filter((entry) => entry.timestamp < cutoffStr).delete();
+        const count = await getEngineConfig()
+            .db.table('conflictHistory')
+            .filter((entry) => entry.timestamp < cutoffStr)
+            .delete();
         if (count > 0) {
             debugLog(`[Conflict] Cleaned up ${count} old conflict history entries`);
         }
