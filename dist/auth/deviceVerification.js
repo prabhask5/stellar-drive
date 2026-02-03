@@ -53,17 +53,21 @@ export function getDeviceLabel() {
         browser = 'Chrome';
     else if (ua.includes('Safari') && !ua.includes('Chrome'))
         browser = 'Safari';
-    // Detect OS
-    if (ua.includes('Mac OS X'))
+    // Detect OS — mobile checks must come before desktop checks because
+    // mobile UA strings often contain desktop OS identifiers
+    // (e.g. iPhone UA contains "like Mac OS X", Android UA contains "Linux")
+    if (ua.includes('iPhone') || ua.includes('iPad') || ua.includes('iPod'))
+        os = 'iOS';
+    else if (ua.includes('Android'))
+        os = 'Android';
+    else if (ua.includes('Mac OS X'))
         os = 'macOS';
     else if (ua.includes('Windows'))
         os = 'Windows';
+    else if (ua.includes('CrOS'))
+        os = 'ChromeOS';
     else if (ua.includes('Linux'))
         os = 'Linux';
-    else if (ua.includes('Android'))
-        os = 'Android';
-    else if (ua.includes('iPhone') || ua.includes('iPad'))
-        os = 'iOS';
     return os ? `${browser} on ${os}` : browser;
 }
 // ============================================================
@@ -149,7 +153,7 @@ export async function touchTrustedDevice(userId) {
         const deviceId = getDeviceId();
         const { error } = await supabase
             .from('trusted_devices')
-            .update({ last_used_at: new Date().toISOString() })
+            .update({ last_used_at: new Date().toISOString(), device_label: getDeviceLabel() })
             .eq('user_id', userId)
             .eq('device_id', deviceId);
         if (error) {
