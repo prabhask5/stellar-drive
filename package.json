@@ -1,6 +1,6 @@
 {
   "name": "@prabhask5/stellar-engine",
-  "version": "1.0.19",
+  "version": "1.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,6 +36,10 @@
     "./config": {
       "types": "./dist/entries/config.d.ts",
       "import": "./dist/entries/config.js"
+    },
+    "./crdt": {
+      "types": "./dist/entries/crdt.d.ts",
+      "import": "./dist/entries/crdt.js"
     }
   },
   "files": [
@@ -62,7 +66,10 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",
-    "dexie": "^4.2.1"
+    "dexie": "^4.2.1",
+    "y-indexeddb": "^9.0.12",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.20"
   },
   "peerDependencies": {
     "svelte": "^5.0.0"
