@@ -1,4 +1,2 @@
 #!/bin/sh
-# Auto-build before commit so dist/ is always up to date
-npm run build
-git add dist/
+npm run cleanup && npm run validate && npm run build && git add -u

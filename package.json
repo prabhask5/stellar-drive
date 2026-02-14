@@ -1,6 +1,6 @@
 {
   "name": "@prabhask5/stellar-engine",
-  "version": "1.0.19",
+  "version": "1.1.6",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,7 +36,14 @@
     "./config": {
       "types": "./dist/entries/config.d.ts",
       "import": "./dist/entries/config.js"
+    },
+    "./vite": {
+      "types": "./dist/entries/vite.d.ts",
+      "import": "./dist/entries/vite.js"
     }
+  },
+  "bin": {
+    "stellar-engine": "./dist/bin/install-pwa.js"
   },
   "files": [
     "dist"
@@ -46,7 +53,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.sw.json",
     "check": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",

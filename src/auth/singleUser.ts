@@ -311,9 +311,7 @@ export async function completeSingleUserSetup(): Promise<{ error: string | null 
  *
  * Returns deviceVerificationRequired if the device is untrusted.
  */
-export async function unlockSingleUser(
-  gate: string
-): Promise<{
+export async function unlockSingleUser(gate: string): Promise<{
   error: string | null;
   deviceVerificationRequired?: boolean;
   maskedEmail?: string;

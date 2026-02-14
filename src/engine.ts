@@ -82,7 +82,7 @@ function getSyncIntervalMs(): number {
   return getEngineConfig().syncIntervalMs ?? 900000;
 }
 function getTombstoneMaxAgeDays(): number {
-  return getEngineConfig().tombstoneMaxAgeDays ?? 1;
+  return getEngineConfig().tombstoneMaxAgeDays ?? 7;
 }
 function getVisibilitySyncMinAwayMs(): number {
   return getEngineConfig().visibilitySyncMinAwayMs ?? 300000;
@@ -1517,6 +1517,103 @@ async function reconcileLocalWithRemote(): Promise<number> {
   return requeued;
 }
 
+/**
+ * Full reconciliation: removes local records that no longer exist on the server.
+ *
+ * When a client has been offline longer than the tombstone TTL, soft-deleted
+ * records may have been hard-deleted from the server. The normal incremental
+ * pull can't detect these missing records. This function fetches all non-deleted
+ * IDs from the server and deletes any local records not found in that set.
+ *
+ * Only runs when the client's sync cursor is older than tombstoneMaxAgeDays,
+ * indicating the client may have missed tombstone cleanup.
+ */
+async function fullReconciliation(): Promise<number> {
+  const userId = await getCurrentUserId();
+  if (!userId) return 0;
+
+  const config = getEngineConfig();
+  const db = config.db!;
+  const supabase = config.supabase!;
+
+  // Check if cursor is stale enough to warrant full reconciliation
+  const cursor = getLastSyncCursor(userId);
+  const cursorDate = new Date(cursor);
+  const staleCutoff = new Date();
+  staleCutoff.setDate(staleCutoff.getDate() - getTombstoneMaxAgeDays());
+
+  if (cursorDate >= staleCutoff) {
+    return 0; // Cursor is fresh enough, incremental sync is sufficient
+  }
+
+  debugLog(
+    `[SYNC] Full reconciliation: cursor ${cursor} is older than tombstone TTL, checking for orphaned local records`
+  );
+
+  let totalRemoved = 0;
+
+  try {
+    // Fetch all non-deleted IDs from each table on the server
+    const results = await withTimeout(
+      Promise.all(
+        config.tables.map((table) =>
+          supabase.from(table.supabaseName).select('id').or('deleted.is.null,deleted.eq.false')
+        )
+      ),
+      SYNC_OPERATION_TIMEOUT_MS,
+      'Full reconciliation'
+    );
+
+    // Check for errors
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].error) {
+        debugError(
+          `[SYNC] Full reconciliation failed for ${config.tables[i].supabaseName}:`,
+          results[i].error
+        );
+        continue;
+      }
+    }
+
+    // Compare local IDs against server IDs and remove orphans
+    const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
+    await db.transaction('rw', entityTables, async () => {
+      for (let i = 0; i < config.tables.length; i++) {
+        if (results[i].error) continue;
+
+        const serverIds = new Set(((results[i].data || []) as { id: string }[]).map((r) => r.id));
+        const localTable = db.table(getDexieTableFor(config.tables[i]));
+        const localRecords = (await localTable.toArray()) as { id: string; deleted?: boolean }[];
+
+        const orphanIds: string[] = [];
+        for (const local of localRecords) {
+          // Record exists locally but not on server (and isn't already marked deleted)
+          if (!local.deleted && !serverIds.has(local.id)) {
+            orphanIds.push(local.id);
+          }
+        }
+
+        if (orphanIds.length > 0) {
+          await localTable.bulkDelete(orphanIds);
+          totalRemoved += orphanIds.length;
+          debugLog(
+            `[SYNC] Full reconciliation: removed ${orphanIds.length} orphaned records from ${getDexieTableFor(config.tables[i])}`
+          );
+        }
+      }
+    });
+
+    if (totalRemoved > 0) {
+      debugLog(`[SYNC] Full reconciliation complete: ${totalRemoved} orphaned records removed`);
+      notifySyncComplete();
+    }
+  } catch (error) {
+    debugError('[SYNC] Full reconciliation failed:', error);
+  }
+
+  return totalRemoved;
+}
+
 // Initial hydration: if local DB is empty, pull everything from remote
 async function hydrateFromRemote(): Promise<void> {
   if (typeof navigator === 'undefined' || !navigator.onLine) return;
@@ -1554,6 +1651,9 @@ async function hydrateFromRemote(): Promise<void> {
   if (hasLocalData) {
     // Local has data, release lock and do a normal sync
     releaseSyncLock();
+    // If client has been offline longer than tombstone TTL, run full reconciliation
+    // to remove local records whose server tombstones were already hard-deleted
+    await fullReconciliation();
     // Check for orphaned changes (local data modified after last sync, but empty queue)
     await reconcileLocalWithRemote();
     await runFullSync();

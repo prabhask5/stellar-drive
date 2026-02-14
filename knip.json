@@ -7,6 +7,9 @@
   "project": [
     "src/**/*.ts"
   ],
+  "ignoreFiles": [
+    "src/sw/sw.ts"
+  ],
   "ignoreDependencies": [
     "svelte"
   ]
