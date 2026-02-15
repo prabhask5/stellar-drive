@@ -76,6 +76,8 @@ export interface DetailStore<T> {
     clear(): void;
     /** Replace the store's data directly. */
     set(data: T | null): void;
+    /** Apply an optimistic mutation to the current data. */
+    mutate(fn: (item: T | null) => T | null): void;
     /** Get the currently tracked entity ID, or null if none loaded. */
     getCurrentId(): string | null;
 }

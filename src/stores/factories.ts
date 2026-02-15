@@ -93,6 +93,9 @@ export interface DetailStore<T> {
   /** Replace the store's data directly. */
   set(data: T | null): void;
 
+  /** Apply an optimistic mutation to the current data. */
+  mutate(fn: (item: T | null) => T | null): void;
+
   /** Get the currently tracked entity ID, or null if none loaded. */
   getCurrentId(): string | null;
 }
@@ -203,7 +206,7 @@ export function createCollectionStore<T>(config: CollectionStoreConfig<T>): Coll
  * ```
  */
 export function createDetailStore<T>(config: DetailStoreConfig<T>): DetailStore<T> {
-  const { subscribe, set } = writable<T | null>(null);
+  const { subscribe, set, update } = writable<T | null>(null);
   const loading = writable<boolean>(true);
   let currentId: string | null = null;
   let syncUnsubscribe: (() => void) | null = null;
@@ -241,6 +244,10 @@ export function createDetailStore<T>(config: DetailStoreConfig<T>): DetailStore<
 
     set(data: T | null): void {
       set(data);
+    },
+
+    mutate(fn: (item: T | null) => T | null): void {
+      update(fn);
     },
 
     getCurrentId(): string | null {

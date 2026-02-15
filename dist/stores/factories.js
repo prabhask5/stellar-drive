@@ -111,7 +111,7 @@ export function createCollectionStore(config) {
  * ```
  */
 export function createDetailStore(config) {
-    const { subscribe, set } = writable(null);
+    const { subscribe, set, update } = writable(null);
     const loading = writable(true);
     let currentId = null;
     let syncUnsubscribe = null;
@@ -145,6 +145,9 @@ export function createDetailStore(config) {
         },
         set(data) {
             set(data);
+        },
+        mutate(fn) {
+            update(fn);
         },
         getCurrentId() {
             return currentId;
