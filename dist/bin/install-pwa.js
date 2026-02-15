@@ -625,10 +625,7 @@ function generateAppHtml(opts) {
 
     <!-- Theme color matches \`--color-void\` for seamless safe-area blending -->
     <meta name="theme-color" content="#050510" />
-    <meta
-      name="description"
-      content="${opts.name} - ${opts.description}"
-    />
+    <meta name="description" content="${opts.name} - ${opts.description}" />
     <meta
       name="keywords"
       content="pwa, offline-first, productivity, utilities, svelte, sveltekit"
@@ -643,10 +640,7 @@ function generateAppHtml(opts) {
     <!-- Used by Facebook, LinkedIn, Discord, Slack, etc. for link previews -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="${opts.name}" />
-    <meta
-      property="og:description"
-      content="${opts.description}"
-    />
+    <meta property="og:description" content="${opts.description}" />
     <meta property="og:image" content="%sveltekit.assets%/icon-512.png" />
 
     <!-- ================================================================= -->
@@ -656,10 +650,7 @@ function generateAppHtml(opts) {
     <!-- "summary" card type → square image + title + description -->
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="${opts.name}" />
-    <meta
-      name="twitter:description"
-      content="${opts.description}"
-    />
+    <meta name="twitter:description" content="${opts.description}" />
 
     <!-- ================================================================= -->
     <!--                      PWA / MANIFEST CONFIG                        -->
@@ -1762,6 +1753,9 @@ function generateHomePage(opts) {
   import { resolveFirstName } from '@prabhask5/stellar-engine/auth';
   import { onSyncComplete, authState } from '@prabhask5/stellar-engine/stores';
 
+  /* ── SvelteKit ── */
+  import { goto } from '$app/navigation';
+
   // ==========================================================================
   //                           COMPONENT STATE
   // ==========================================================================
@@ -1770,11 +1764,9 @@ function generateHomePage(opts) {
    * Derive the user's first name for the greeting display.
    * Falls back through session profile → email username → offline profile → 'Explorer'.
    */
-  const firstName = $derived(
-    resolveFirstName($authState.session, $authState.offlineProfile)
-  );
+  const firstName = $derived(resolveFirstName($authState.session, $authState.offlineProfile));
 
-    // =============================================================================
+  // =============================================================================
   //  Reactive Effects
   // =============================================================================
 
@@ -1824,6 +1816,8 @@ function generateErrorPage(opts) {
   // ==========================================================================
 
   import { page } from '$app/stores';
+  import { browser } from '$app/environment';
+  import { goto } from '$app/navigation';
 
   // ==========================================================================
   //                                 STATE
@@ -2200,7 +2194,7 @@ function generateLoginPage(opts) {
   the /confirm page so email verification results propagate instantly.
 -->
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/stores';
   import {
@@ -3708,9 +3702,7 @@ function generateProfilePage(opts) {
       return;
     forceSyncing = true;
     try {
-      const fn = getDebugWindow().__${opts.prefix}Sync as
-        | { forceFullSync: () => Promise<void> }
-        | undefined;
+      const fn = getDebugWindow().__${opts.prefix}Sync as { forceFullSync: () => Promise<void> } | undefined;
       if (fn?.forceFullSync) {
         await fn.forceFullSync();
         alert('Force full sync complete.');
@@ -3744,9 +3736,7 @@ function generateProfilePage(opts) {
   async function handleResetSyncCursor() {
     resettingCursor = true;
     try {
-      const fn = getDebugWindow().__${opts.prefix}Sync as
-        | { resetSyncCursor: () => Promise<void> }
-        | undefined;
+      const fn = getDebugWindow().__${opts.prefix}Sync as { resetSyncCursor: () => Promise<void> } | undefined;
       if (fn?.resetSyncCursor) {
         await fn.resetSyncCursor();
         alert('Sync cursor reset. The next sync will pull all data.');
