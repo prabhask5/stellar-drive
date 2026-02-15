@@ -11,7 +11,7 @@
   - z-index 9000 — above page content, below modals.
 -->
 <script lang="ts">
-  import { isDemoMode } from '../demo';
+  import { isDemoMode } from '@prabhask5/stellar-engine';
 
   let dismissed = $state(false);
   const visible = $derived(isDemoMode() && !dismissed);
