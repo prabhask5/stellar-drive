@@ -340,14 +340,6 @@ Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
 - **Library (1):** `src/lib/types.ts` with re-exports and app-specific type stubs
 - **Git hooks (1):** `.husky/pre-commit` with lint + format + validate
 
-### Setup
-
-Validate Supabase credentials and schema against a running project:
-
-```bash
-npx @prabhask5/stellar-engine setup
-```
-
 ## API overview
 
 ### Engine Configuration and Lifecycle
