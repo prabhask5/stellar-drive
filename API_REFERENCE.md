@@ -11,13 +11,14 @@ Complete reference for all public exports from `@prabhask5/stellar-engine`.
 | `@prabhask5/stellar-engine/auth` | Authentication functions, display utilities (`resolveFirstName`, `resolveUserId`, `resolveAvatarInitial`) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions + store factories |
 | `@prabhask5/stellar-engine/types` | All type exports (including `Session` from Supabase) |
-| `@prabhask5/stellar-engine/utils` | Utility functions + debug (`snakeToCamel`, etc.) |
+| `@prabhask5/stellar-engine/utils` | Utility functions + debug + diagnostics + SQL generation |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions |
 | `@prabhask5/stellar-engine/config` | Runtime config, `getDexieTableFor` |
 | `@prabhask5/stellar-engine/kit` | SvelteKit route helpers, server APIs, load functions, email confirmation, auth hydration |
 | `@prabhask5/stellar-engine/components/SyncStatus` | Sync status indicator Svelte component |
-| `@prabhask5/stellar-engine/crdt` | CRDT collaborative editing (document lifecycle, shared types, presence, offline) |
 | `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Cross-device conflict banner Svelte component |
+| `@prabhask5/stellar-engine/components/DemoBanner` | Demo mode banner Svelte component |
+| `@prabhask5/stellar-engine/crdt` | CRDT collaborative editing (document lifecycle, shared types, presence, offline) |
 
 All exports are also available from the root `@prabhask5/stellar-engine` for backward compatibility.
 
@@ -25,8 +26,8 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 
 ## Table of Contents
 
-- [Configuration](#configuration)
-- [Database](#database)
+- [Engine Configuration](#engine-configuration)
+- [Database Access](#database-access)
 - [Engine Lifecycle](#engine-lifecycle)
 - [Credential Validation](#credential-validation)
 - [CRUD Operations](#crud-operations)
@@ -34,31 +35,40 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Query Helpers](#query-helpers)
 - [Repository Helpers](#repository-helpers)
 - [Store Factories](#store-factories)
-- [Authentication](#authentication)
+- [Authentication Core](#authentication-core)
 - [Auth Lifecycle](#auth-lifecycle)
 - [Auth Display Utilities](#auth-display-utilities)
+- [Login Guard](#login-guard)
 - [Single-User Auth](#single-user-auth)
 - [Device Verification](#device-verification)
-- [Stores](#stores)
+- [Reactive Stores](#reactive-stores)
 - [Realtime](#realtime)
 - [Supabase Client](#supabase-client)
-- [Runtime Config](#runtime-config)
+- [Runtime Configuration](#runtime-configuration)
 - [Diagnostics](#diagnostics)
 - [Debug](#debug)
 - [Utilities](#utilities)
+- [SQL & TypeScript Generation](#sql--typescript-generation)
 - [Svelte Actions](#svelte-actions)
 - [Svelte Components](#svelte-components)
 - [SvelteKit Helpers](#sveltekit-helpers)
-- [Install PWA Command](#install-pwa-command)
+- [Demo Mode](#demo-mode)
+- [CRDT Collaborative Editing](#crdt-collaborative-editing)
 - [Types](#types)
+- [CLI Commands](#cli-commands)
+- [Re-exports](#re-exports)
 
 ---
 
-## Configuration
+## Engine Configuration
 
 ### `initEngine(config)`
 
-Initialize the sync engine with configuration. Must be called before any other engine function.
+Initialize the sync engine with configuration. Must be called before any other engine function. This is the first function consumers call at app startup. It accepts a `SyncEngineConfig` object that describes which Supabase tables to sync, authentication settings, sync timing parameters, and optional CRDT/demo mode configuration.
+
+The engine supports two configuration modes:
+1. **Schema-driven** (recommended) -- Provide a `schema` object. The engine auto-generates `tables`, Dexie stores, versioning, and database naming.
+2. **Manual** (backward compat) -- Provide explicit `tables` and `database`.
 
 ```ts
 function initEngine(config: SyncEngineConfig): void
@@ -68,11 +78,29 @@ function initEngine(config: SyncEngineConfig): void
 |-----------|------|-------------|
 | `config` | `SyncEngineConfig` | Engine configuration object |
 
-**Example:**
+**Example (schema-driven):**
 
 ```ts
 import { initEngine } from '@prabhask5/stellar-engine';
 
+initEngine({
+  prefix: 'myapp',
+  schema: {
+    tasks: 'project_id, order',
+    projects: 'is_current, order',
+    user_settings: { singleton: true },
+  },
+  auth: {
+    singleUser: { gateType: 'code', codeLength: 4 },
+    enableOfflineAuth: true,
+    confirmRedirectPath: '/confirm',
+  },
+});
+```
+
+**Example (manual):**
+
+```ts
 initEngine({
   prefix: 'myapp',
   tables: [
@@ -92,29 +120,40 @@ initEngine({
 
 ```ts
 interface SyncEngineConfig {
-  tables: TableConfig[];
-  prefix: string;
-  db?: Dexie;                              // Pre-created Dexie instance (backward compat)
-  supabase?: SupabaseClient;               // Pre-created Supabase client (backward compat)
-  database?: DatabaseConfig;               // Engine creates and owns the Dexie instance
+  tables: TableConfig[];                       // Per-table sync config (auto-populated with schema)
+  prefix: string;                              // App prefix for localStorage keys, debug, etc.
+  schema?: SchemaDefinition;                   // Declarative schema (replaces tables + database)
+  databaseName?: string;                       // Override auto-generated DB name (default: ${prefix}DB)
+  db?: Dexie;                                  // Pre-created Dexie instance (backward compat)
+  supabase?: SupabaseClient;                   // Pre-created Supabase client (backward compat)
+  database?: DatabaseConfig;                   // Engine creates and owns the Dexie instance
   auth?: {
     singleUser?: {
-      gateType: SingleUserGateType;         // 'code' or 'password'
-      codeLength?: 4 | 6;                   // Required when gateType is 'code'
+      gateType: SingleUserGateType;            // 'code' or 'password'
+      codeLength?: 4 | 6;                      // Required when gateType is 'code'
     };
     profileExtractor?: (userMetadata: Record<string, unknown>) => Record<string, unknown>;
     profileToMetadata?: (profile: Record<string, unknown>) => Record<string, unknown>;
     enableOfflineAuth?: boolean;
     sessionValidationIntervalMs?: number;
     confirmRedirectPath?: string;
+    deviceVerification?: {
+      enabled: boolean;
+      trustDurationDays?: number;              // Default: 90
+    };
+    emailConfirmation?: {
+      enabled: boolean;
+    };
   };
   onAuthStateChange?: (event: string, session: Session | null) => void;
   onAuthKicked?: (message: string) => void;
-  syncDebounceMs?: number;                 // Default: 2000
-  syncIntervalMs?: number;                 // Default: 900000 (15 min)
-  tombstoneMaxAgeDays?: number;            // Default: 1
-  visibilitySyncMinAwayMs?: number;        // Default: 300000 (5 min)
-  onlineReconnectCooldownMs?: number;      // Default: 120000 (2 min)
+  syncDebounceMs?: number;                     // Default: 2000
+  syncIntervalMs?: number;                     // Default: 900000 (15 min)
+  tombstoneMaxAgeDays?: number;                // Default: 7
+  visibilitySyncMinAwayMs?: number;            // Default: 300000 (5 min)
+  onlineReconnectCooldownMs?: number;          // Default: 120000 (2 min)
+  demo?: DemoConfig;                           // Demo mode config (sandboxed DB, mock data)
+  crdt?: CRDTConfig | true;                    // CRDT config (pass true for all defaults)
 }
 ```
 
@@ -122,23 +161,63 @@ interface SyncEngineConfig {
 
 ```ts
 interface TableConfig {
-  supabaseName: string;                    // Supabase table name
-  columns: string;                         // Supabase select columns
-  ownershipFilter?: string;                // Column used for RLS ownership filtering
-  isSingleton?: boolean;                   // One record per user (e.g., user settings)
-  excludeFromConflict?: string[];          // Fields to skip during conflict resolution
-  numericMergeFields?: string[];           // Fields that use additive merge for conflicts
+  supabaseName: string;                        // Supabase table name (snake_case)
+  columns: string;                             // Supabase SELECT columns (egress optimization)
+  ownershipFilter?: string;                    // Column used for RLS ownership filtering
+  isSingleton?: boolean;                       // One record per user (e.g., user settings)
+  excludeFromConflict?: string[];              // Fields to skip during conflict resolution
+  numericMergeFields?: string[];               // Fields that use additive merge for conflicts
   onRemoteChange?: (table: string, record: Record<string, unknown>) => void;
 }
 ```
 
-The Dexie (IndexedDB) table name is **automatically derived** from `supabaseName` using `snakeToCamel()` conversion. For example, `supabaseName: 'goal_lists'` produces the Dexie table name `goalLists`. The `snakeToCamel()` function also strips invalid characters (non-alphanumeric except underscores) before converting. The `database.versions[].stores` config should use the camelCase names for IndexedDB index definitions.
+The Dexie (IndexedDB) table name is **automatically derived** from `supabaseName` using `snakeToCamel()` conversion. For example, `supabaseName: 'goal_lists'` produces the Dexie table name `goalLists`. The `database.versions[].stores` config should use the camelCase names for IndexedDB index definitions.
 
 Use `getDexieTableFor(table)` (exported from `@prabhask5/stellar-engine/config`) to resolve the Dexie table name for a given Supabase table name at runtime.
 
+### `InitEngineInput`
+
+Type alias representing the input to `initEngine()`. Equivalent to `SyncEngineConfig`.
+
+### `SchemaDefinition`
+
+```ts
+type SchemaDefinition = Record<string, string | SchemaTableConfig>;
+```
+
+Each key is a Supabase table name (snake_case). Values are either a string of app-specific Dexie indexes (system indexes auto-appended) or a `SchemaTableConfig` object for full control.
+
+```ts
+const schema: SchemaDefinition = {
+  goals: 'goal_list_id, order',           // string shorthand
+  focus_settings: { singleton: true },     // object form
+  projects: 'is_current, order',
+};
+```
+
+### `SchemaTableConfig`
+
+```ts
+interface SchemaTableConfig {
+  indexes?: string;                            // App-specific Dexie indexes (default: '')
+  singleton?: boolean;                         // Single row per user (default: false)
+  ownership?: string;                          // Override default 'user_id' ownership column
+  columns?: string;                            // Explicit Supabase SELECT columns
+  dexieName?: string;                          // Override auto-generated camelCase Dexie table name
+  excludeFromConflict?: string[];              // Fields to skip during conflict resolution
+  numericMergeFields?: string[];               // Numeric fields for additive merge during conflicts
+  onRemoteChange?: (table: string, record: Record<string, unknown>) => void;
+  sqlColumns?: Record<string, string>;         // Explicit SQL column types (overrides inference)
+  fields?: Record<string, FieldType>;          // Declarative field defs for TS + SQL generation
+  typeName?: string;                           // Override auto-generated PascalCase interface name
+  renamedFrom?: string;                        // Previous table name (one-time rename hint)
+  renamedColumns?: Record<string, string>;     // Column renames as { newName: oldName }
+}
+```
+
 ---
 
-## Database
+## Database Access
 
 ### `getDb()`
 
@@ -152,7 +231,7 @@ function getDb(): Dexie
 
 ### `resetDatabase()`
 
-Delete the entire IndexedDB database and clear sync cursors from localStorage. Use this as a nuclear recovery option when the database is corrupted (e.g., missing object stores due to failed upgrades). After calling, the app should reload so `initEngine()` runs fresh and rehydrates from Supabase. The Supabase auth session is preserved so the user doesn't need to log in again.
+Delete the entire IndexedDB database and clear sync cursors from localStorage. Use this as a nuclear recovery option when the database is corrupted (e.g., missing object stores due to failed upgrades). After calling, the app should reload so `initEngine()` runs fresh and rehydrates from Supabase. The Supabase auth session is preserved so the user does not need to log in again.
 
 ```ts
 async function resetDatabase(): Promise<string | null>
@@ -169,12 +248,48 @@ const dbName = await resetDatabase();
 window.location.reload(); // Re-initializes everything from scratch
 ```
 
+### `SYSTEM_INDEXES`
+
+A constant string of Dexie indexes automatically appended to every app table when using the schema-driven API. Contains: `'id, user_id, created_at, updated_at, deleted, _version'`.
+
+```ts
+const SYSTEM_INDEXES: string;
+```
+
+### `computeSchemaVersion(prefix, mergedStores)`
+
+Computes a stable version number for the Dexie database by hashing the current schema definition and comparing it against a previously stored hash in localStorage. Used internally by the schema-driven config to auto-detect schema changes and auto-increment the Dexie version.
+
+```ts
+function computeSchemaVersion(
+  prefix: string,
+  mergedStores: Record<string, string>
+): SchemaVersionResult
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `prefix` | `string` | App prefix (used for localStorage key namespacing) |
+| `mergedStores` | `Record<string, string>` | The full Dexie store schema (app tables + system tables merged) |
+
+**Returns:** `SchemaVersionResult` with the resolved version number and any previous stores for upgrade.
+
+### `SchemaVersionResult`
+
+```ts
+interface SchemaVersionResult {
+  version: number;                             // Resolved Dexie version number (starts at 1)
+  previousStores: Record<string, string> | null; // Previous version's stores, or null if no upgrade
+  previousVersion: number | null;              // Previous version number, or null
+}
+```
+
 ### `DatabaseConfig`
 
 ```ts
 interface DatabaseConfig {
-  name: string;
-  versions: DatabaseVersionConfig[];
+  name: string;                                // IndexedDB database name (unique per app)
+  versions: DatabaseVersionConfig[];           // Ordered list of version declarations
 }
 ```
 
@@ -182,9 +297,9 @@ interface DatabaseConfig {
 
 ```ts
 interface DatabaseVersionConfig {
-  version: number;
-  stores: Record<string, string>;          // App tables only; system tables are auto-merged
-  upgrade?: (tx: Transaction) => Promise<void>;
+  version: number;                             // Version number (positive integer, monotonically increasing)
+  stores: Record<string, string>;              // App tables only; system tables are auto-merged
+  upgrade?: (tx: Transaction) => Promise<void>; // Optional data migration function
 }
 ```
 
@@ -274,7 +389,7 @@ async function validateSupabaseCredentials(
 
 > **Subpath:** `@prabhask5/stellar-engine` (root)
 
-Validates that all configured Supabase tables exist and are accessible. Runs `SELECT id FROM <table> LIMIT 0` per table (zero data egress). If `auth.deviceVerification?.enabled`, also validates the `trusted_devices` table. Called automatically by `startSyncEngine()` on first run when online — can also be called manually.
+Validates that all configured Supabase tables exist and are accessible. Runs `SELECT id FROM <table> LIMIT 0` per table (zero data egress). If `auth.deviceVerification?.enabled`, also validates the `trusted_devices` table. Called automatically by `startSyncEngine()` on first run when online -- can also be called manually.
 
 ```ts
 async function validateSchema(): Promise<{
@@ -284,7 +399,7 @@ async function validateSchema(): Promise<{
 }>
 ```
 
-**Returns:** `{ valid: true, missingTables: [], errors: [] }` if all tables are accessible. Otherwise, `valid` is `false` and `missingTables` lists tables that don't exist, while `errors` includes human-readable messages for all issues (missing tables, RLS denials, etc.).
+**Returns:** `{ valid: true, missingTables: [], errors: [] }` if all tables are accessible. Otherwise, `valid` is `false` and `missingTables` lists tables that do not exist, while `errors` includes human-readable messages for all issues (missing tables, RLS denials, etc.).
 
 **Behavior:** Does not throw. Logs errors via the debug system. When called from `startSyncEngine()`, sets `syncStatusStore` to `'error'` with a descriptive message if validation fails.
 
@@ -608,14 +723,6 @@ async function reorderEntity<T extends Record<string, unknown>>(
 
 **Returns:** The updated entity, or `undefined` if not found.
 
-**Example:**
-
-```ts
-import { reorderEntity } from '@prabhask5/stellar-engine/data';
-
-const updated = await reorderEntity<Task>('tasks', taskId, 2.5);
-```
-
 ### `prependOrder(table, indexField, indexValue)`
 
 Compute the next prepend-order value for inserting at the top of a list. Returns `min(existing orders) - 1`, or `0` if no records exist.
@@ -741,7 +848,7 @@ await taskDetail.load(taskId);
 
 ---
 
-## Authentication
+## Authentication Core
 
 ### `signOut(options?)`
 
@@ -769,7 +876,7 @@ async function resendConfirmationEmail(email: string): Promise<{ error: string |
 
 ### `getUserProfile(user)`
 
-Extract the user profile from a Supabase `User` object. Uses `profileExtractor` from config if provided.
+Extract the user profile from a Supabase `User` object. Uses `profileExtractor` from config if provided, otherwise returns `user_metadata` directly.
 
 ```ts
 function getUserProfile(user: User | null): Record<string, unknown>
@@ -810,7 +917,7 @@ async function getValidSession(): Promise<Session | null>
 
 ### `resolveAuthState()`
 
-Determine the current authentication state. Checks Supabase session when online, falls back to offline session when offline.
+Determine the current authentication state. Checks Supabase session when online, falls back to offline session when offline. For single-user mode, also checks whether initial setup is complete.
 
 ```ts
 async function resolveAuthState(): Promise<AuthStateResult>
@@ -838,9 +945,9 @@ if (authMode === 'supabase') {
 ```ts
 interface AuthStateResult {
   session: Session | null;
-  authMode: 'supabase' | 'offline' | 'none';
+  authMode: 'supabase' | 'offline' | 'demo' | 'none';
   offlineProfile: OfflineCredentials | null;
-  singleUserSetUp?: boolean;              // Only present when mode is 'single-user'
+  singleUserSetUp?: boolean;                   // Only present in single-user mode
 }
 ```
 
@@ -850,7 +957,7 @@ When `auth.singleUser` is configured, the `singleUserSetUp` field indicates whet
 
 ## Auth Display Utilities
 
-Pure helper functions that resolve user-facing display values from the auth state. Each handles the full fallback chain across online (Supabase session) and offline (cached credentials) modes. These are stateless and framework-agnostic — wrap in `$derived` for Svelte 5 reactivity.
+Pure helper functions that resolve user-facing display values from the auth state. Each handles the full fallback chain across online (Supabase session) and offline (cached credentials) modes. These are stateless and framework-agnostic -- wrap in `$derived` for Svelte 5 reactivity.
 
 ### `resolveFirstName(session, offlineProfile, fallback?)`
 
@@ -866,8 +973,8 @@ function resolveFirstName(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `session` | `Session \| null` | — | Current Supabase session |
-| `offlineProfile` | `OfflineCredentials \| null` | — | Cached offline credentials |
+| `session` | `Session \| null` | -- | Current Supabase session |
+| `offlineProfile` | `OfflineCredentials \| null` | -- | Cached offline credentials |
 | `fallback` | `string` | `'Explorer'` | Value returned when no name can be resolved |
 
 **Fallback chain:**
@@ -884,18 +991,12 @@ function resolveFirstName(
   import { resolveFirstName } from '@prabhask5/stellar-engine/auth';
   import { authState } from '@prabhask5/stellar-engine/stores';
 
-  // Reactive — re-derives when auth state changes
   const firstName = $derived(
     resolveFirstName($authState.session, $authState.offlineProfile)
   );
-
-  // With a custom fallback for greetings
-  const greeting = $derived(
-    resolveFirstName($authState.session, $authState.offlineProfile, 'there')
-  );
 </script>
 
-<h1>Hey, {greeting}!</h1>
+<h1>Hey, {firstName}!</h1>
 ```
 
 ### `resolveUserId(session, offlineProfile)`
@@ -909,25 +1010,7 @@ function resolveUserId(
 ): string
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `session` | `Session \| null` | Current Supabase session |
-| `offlineProfile` | `OfflineCredentials \| null` | Cached offline credentials |
-
 **Returns:** The user's UUID, or `''` if unauthenticated.
-
-**Example:**
-
-```ts
-import { resolveUserId } from '@prabhask5/stellar-engine/auth';
-
-const userId = resolveUserId(data.session, data.offlineProfile);
-if (!userId) {
-  error = 'Not authenticated';
-  return;
-}
-const items = await engineGetAll('items');
-```
 
 ### `resolveAvatarInitial(session, offlineProfile, fallback?)`
 
@@ -943,26 +1026,11 @@ function resolveAvatarInitial(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `session` | `Session \| null` | — | Current Supabase session |
-| `offlineProfile` | `OfflineCredentials \| null` | — | Cached offline credentials |
+| `session` | `Session \| null` | -- | Current Supabase session |
+| `offlineProfile` | `OfflineCredentials \| null` | -- | Cached offline credentials |
 | `fallback` | `string` | `'?'` | Character returned when no initial can be derived |
 
 **Returns:** A single uppercase character.
-
-**Example:**
-
-```svelte
-<script lang="ts">
-  import { resolveAvatarInitial } from '@prabhask5/stellar-engine/auth';
-  import { authState } from '@prabhask5/stellar-engine/stores';
-
-  const initial = $derived(
-    resolveAvatarInitial($authState.session, $authState.offlineProfile)
-  );
-</script>
-
-<span class="avatar">{initial}</span>
-```
 
 ---
 
@@ -977,7 +1045,7 @@ The login guard provides local credential pre-checking and rate limiting to mini
 - If a user changes their password on another device, the local hash will no longer match. After 5 consecutive local rejections, the cached hash is invalidated and the system falls through to rate-limited Supabase authentication. On successful Supabase login, the new hash is cached immediately.
 - If a locally-matched password is rejected by Supabase (stale hash), the cached hash is invalidated so future attempts use Supabase directly.
 
-**State is in-memory only** — it resets on page refresh.
+**State is in-memory only** -- it resets on page refresh.
 
 ### `resetLoginGuard()`
 
@@ -991,7 +1059,7 @@ function resetLoginGuard(): void
 
 ## Single-User Auth
 
-Single-user mode uses **real Supabase email/password auth** where the user provides an email during setup and a PIN code (or password) that is padded and used as the Supabase password. The PIN is verified server-side by Supabase — no client-side hash comparison. This gives server-side rate limiting, real user identity, and proper RLS enforcement.
+Single-user mode uses **real Supabase email/password auth** where the user provides an email during setup and a PIN code (or password) that is padded and used as the Supabase password. The PIN is verified server-side by Supabase -- no client-side hash comparison. This gives server-side rate limiting, real user identity, and proper RLS enforcement.
 
 This mode is designed for personal apps where there is one user per device/deployment.
 
@@ -1024,8 +1092,6 @@ Check if single-user mode has been set up (i.e., a `SingleUserConfig` record exi
 async function isSingleUserSetUp(): Promise<boolean>
 ```
 
-**Returns:** `true` if setup is complete, `false` otherwise.
-
 ### `getSingleUserInfo()`
 
 Get non-sensitive display info about the configured single user. Returns `null` if not set up.
@@ -1037,8 +1103,6 @@ async function getSingleUserInfo(): Promise<{
   codeLength?: 4 | 6;
 } | null>
 ```
-
-**Returns:** Profile data and gate configuration, or `null`.
 
 **Example:**
 
@@ -1054,7 +1118,7 @@ if (info) {
 
 ### `setupSingleUser(gate, profile, email)`
 
-First-time setup. Calls `supabase.auth.signUp()` with the email and padded PIN as password. Stores config in IndexedDB. If `emailConfirmation.enabled`, returns `{ confirmationRequired: true }` — the app should show a confirmation modal.
+First-time setup. Calls `supabase.auth.signUp()` with the email and padded PIN as password. Stores config in IndexedDB. If `emailConfirmation.enabled`, returns `{ confirmationRequired: true }` -- the app should show a confirmation modal.
 
 ```ts
 async function setupSingleUser(
@@ -1108,19 +1172,10 @@ async function unlockSingleUser(
 
 ### `lockSingleUser()`
 
-Lock the app. Stops the sync engine and resets auth state to `'none'`. Does **not** sign out of Supabase, destroy the session, or clear local data — so unlocking is fast.
+Lock the app. Stops the sync engine and resets auth state to `'none'`. Does **not** sign out of Supabase, destroy the session, or clear local data -- so unlocking is fast.
 
 ```ts
 async function lockSingleUser(): Promise<void>
-```
-
-**Example:**
-
-```ts
-import { lockSingleUser } from '@prabhask5/stellar-engine/auth';
-
-await lockSingleUser();
-// Redirect to login/unlock screen
 ```
 
 ### `changeSingleUserGate(oldGate, newGate)`
@@ -1139,8 +1194,6 @@ async function changeSingleUserGate(
 | `oldGate` | `string` | Current code or password |
 | `newGate` | `string` | New code or password |
 
-**Returns:** `{ error: null }` on success, or `{ error: string }` if the old gate is incorrect.
-
 ### `updateSingleUserProfile(profile)`
 
 Update the user's profile in IndexedDB and Supabase `user_metadata`.
@@ -1150,10 +1203,6 @@ async function updateSingleUserProfile(
   profile: Record<string, unknown>
 ): Promise<{ error: string | null }>
 ```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `profile` | `Record<string, unknown>` | Updated profile fields (e.g., `{ firstName, lastName }`) |
 
 ### `changeSingleUserEmail(newEmail)`
 
@@ -1165,10 +1214,6 @@ async function changeSingleUserEmail(
 ): Promise<{ error: string | null; confirmationRequired: boolean }>
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `newEmail` | `string` | The new email address |
-
 **Returns:** `{ error: null, confirmationRequired: true }` on success. Returns an error if offline or not set up.
 
 ### `completeSingleUserEmailChange()`
@@ -1177,32 +1222,6 @@ Complete an email change after the user confirms via the email link. Refreshes t
 
 ```ts
 async function completeSingleUserEmailChange(): Promise<{ error: string | null; newEmail: string | null }>
-```
-
-**Returns:** `{ error: null, newEmail: 'new@example.com' }` on success.
-
-**Example:**
-
-```ts
-import { changeSingleUserEmail, completeSingleUserEmailChange } from '@prabhask5/stellar-engine/auth';
-
-// Step 1: Initiate
-const { error, confirmationRequired } = await changeSingleUserEmail('new@example.com');
-if (confirmationRequired) {
-  // Show "check your email" modal, listen for BroadcastChannel AUTH_CONFIRMED
-  // with verificationType === 'email_change'
-}
-
-// Step 2: After confirmation
-const { newEmail } = await completeSingleUserEmailChange();
-```
-
-### `resetSingleUser()`
-
-Full reset: clears the single-user config from IndexedDB, signs out of Supabase, and clears all local data. After reset, the app should show the setup screen again.
-
-```ts
-async function resetSingleUser(): Promise<{ error: string | null }>
 ```
 
 ### `completeSingleUserSetup()`
@@ -1221,6 +1240,14 @@ Called after device OTP verification succeeds. Trusts the current device and res
 async function completeDeviceVerification(
   tokenHash?: string
 ): Promise<{ error: string | null }>
+```
+
+### `pollDeviceVerification()`
+
+Polls for device verification completion. Used when waiting for the user to click the email OTP link in another tab.
+
+```ts
+async function pollDeviceVerification(): Promise<{ verified: boolean; error: string | null }>
 ```
 
 ### `linkSingleUserDevice(email, pin)`
@@ -1244,7 +1271,32 @@ async function linkSingleUserDevice(
 | `email` | `string` | The account email |
 | `pin` | `string` | The PIN code or password |
 
-**Returns:** `{ error: null }` on success. Includes `retryAfterMs` when rate-limited.
+### `resetSingleUser()`
+
+Full reset: clears the single-user config from IndexedDB, signs out of Supabase, and clears all local data. After reset, the app should show the setup screen again.
+
+```ts
+async function resetSingleUser(): Promise<{ error: string | null }>
+```
+
+### `resetSingleUserRemote()`
+
+Remote account reset: deletes the Supabase user account and all remote data, then performs a local reset. Use when the user wants to completely destroy their account.
+
+```ts
+async function resetSingleUserRemote(): Promise<{ error: string | null }>
+```
+
+### `fetchRemoteGateConfig()`
+
+Fetch the gate configuration from a remote Supabase user's metadata. Used during device linking to determine the gate type and code length before prompting the user.
+
+```ts
+async function fetchRemoteGateConfig(): Promise<{
+  gateType: SingleUserGateType;
+  codeLength?: 4 | 6;
+} | null>
+```
 
 ### `padPin(pin)`
 
@@ -1262,23 +1314,39 @@ Optional device trust system that requires email OTP verification on untrusted d
 
 ### `isDeviceTrusted(userId)`
 
+Check if the current device is trusted for a given user.
+
 ```ts
 async function isDeviceTrusted(userId: string): Promise<boolean>
 ```
 
 ### `trustCurrentDevice(userId)`
 
+Mark the current device as trusted for a given user. Writes to the `trusted_devices` Supabase table.
+
 ```ts
 async function trustCurrentDevice(userId: string): Promise<void>
 ```
 
+### `trustPendingDevice()`
+
+Trust a device that has just completed OTP verification. Used internally by the confirm flow.
+
+```ts
+async function trustPendingDevice(): Promise<void>
+```
+
 ### `getTrustedDevices(userId)`
+
+List all trusted devices for a user from the `trusted_devices` Supabase table.
 
 ```ts
 async function getTrustedDevices(userId: string): Promise<TrustedDevice[]>
 ```
 
 ### `removeTrustedDevice(id)`
+
+Remove a trusted device by its record ID.
 
 ```ts
 async function removeTrustedDevice(id: string): Promise<void>
@@ -1302,7 +1370,7 @@ async function verifyDeviceCode(tokenHash: string): Promise<{ error: string | nu
 
 ### `maskEmail(email)`
 
-Mask an email for display (e.g., "pr••••@gmail.com").
+Mask an email for display (e.g., `"pr****@gmail.com"`).
 
 ```ts
 function maskEmail(email: string): string
@@ -1310,7 +1378,7 @@ function maskEmail(email: string): string
 
 ### `getDeviceLabel()`
 
-Get a human-readable label for the current device (e.g., "Chrome on macOS").
+Get a human-readable label for the current device (e.g., `"Chrome on macOS"`).
 
 ```ts
 function getDeviceLabel(): string
@@ -1318,7 +1386,7 @@ function getDeviceLabel(): string
 
 ### `getCurrentDeviceId()`
 
-Get the current device's stable ID.
+Get the current device's stable ID. Generated once and persisted in localStorage.
 
 ```ts
 function getCurrentDeviceId(): string
@@ -1339,9 +1407,9 @@ interface TrustedDevice {
 
 ---
 
-## Stores
+## Reactive Stores
 
-All stores are Svelte-compatible (implement `subscribe`).
+All stores are Svelte-compatible (implement `subscribe`). Use `$store` syntax in `.svelte` files.
 
 ### `syncStatusStore`
 
@@ -1441,7 +1509,7 @@ Svelte readable store tracking network connectivity. Also provides lifecycle hoo
 
 ### `authState`
 
-Svelte store tracking authentication mode and session.
+Svelte store tracking authentication mode and session. The store value is an **object** with properties `mode`, `session`, `offlineProfile`, `isLoading`, and `authKickedMessage`.
 
 **Key methods:**
 
@@ -1450,12 +1518,15 @@ Svelte store tracking authentication mode and session.
 | `subscribe` | `(cb) => unsubscribe` | Standard Svelte subscribe |
 | `setSupabaseAuth` | `(session: Session) => void` | Set mode to `'supabase'` with session |
 | `setOfflineAuth` | `(profile: OfflineCredentials) => void` | Set mode to `'offline'` with cached profile |
+| `setDemoAuth` | `() => void` | Set mode to `'demo'` |
 | `setNoAuth` | `(kickedMessage?: string) => void` | Set mode to `'none'` |
 | `setLoading` | `(isLoading: boolean) => void` | Set loading state |
 | `clearKickedMessage` | `() => void` | Clear the auth-kicked message |
 | `updateSession` | `(session: Session \| null) => void` | Update session (e.g., on token refresh) |
 | `updateUserProfile` | `(profile: Record<string, unknown>) => void` | Update profile info in current session |
 | `reset` | `() => void` | Reset to initial state |
+
+**Important:** `authState` is an object store. Do NOT compare `$authState === 'string'` -- use `$authState.mode` or check `data.authMode` from layout load data.
 
 ### `isAuthenticated`
 
@@ -1521,7 +1592,7 @@ const { data, error } = await supabase
 
 ---
 
-## Runtime Config
+## Runtime Configuration
 
 ### `initConfig()`
 
@@ -1548,10 +1619,6 @@ Set config directly and persist to localStorage cache. Used after a setup wizard
 ```ts
 function setConfig(config: AppConfig): void
 ```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `config` | `AppConfig` | The configuration to set |
 
 ### `AppConfig`
 
@@ -1593,7 +1660,7 @@ getDexieTableFor('projects');   // 'projects'
 **Import:** `import { getDiagnostics, ... } from '@prabhask5/stellar-engine'`
 **Subpath:** `import { getDiagnostics, ... } from '@prabhask5/stellar-engine/utils'`
 
-The diagnostics module provides a unified API for inspecting the internal state of the sync engine. Each call returns a **point-in-time snapshot** — poll at your desired frequency for a live dashboard.
+The diagnostics module provides a unified API for inspecting the internal state of the sync engine. Each call returns a **point-in-time snapshot** -- poll at your desired frequency for a live dashboard.
 
 ### `getDiagnostics()`
 
@@ -1630,7 +1697,7 @@ function getRealtimeDiagnostics(): { connectionState; healthy; reconnectAttempts
 
 ### `getQueueDiagnostics()`
 
-Get pending sync queue breakdown (async — reads IndexedDB).
+Get pending sync queue breakdown (async -- reads IndexedDB).
 
 ```ts
 async function getQueueDiagnostics(): Promise<{
@@ -1645,7 +1712,7 @@ async function getQueueDiagnostics(): Promise<{
 
 ### `getConflictDiagnostics()`
 
-Get recent conflict resolution history (async — reads IndexedDB).
+Get recent conflict resolution history (async -- reads IndexedDB).
 
 ```ts
 async function getConflictDiagnostics(): Promise<{
@@ -1694,20 +1761,6 @@ function getErrorDiagnostics(): {
 
 See the full type definition in `src/diagnostics.ts`. Key sections: `sync`, `egress`, `queue`, `realtime`, `network`, `engine`, `conflicts`, `errors`, `config`.
 
-### `formatBytes(bytes)`
-
-Format a byte count into a human-readable string.
-
-```ts
-function formatBytes(bytes: number): string
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `bytes` | `number` | The byte count to format |
-
-**Returns:** Formatted string (e.g., `"45.23 KB"`, `"1.20 MB"`, `"512 B"`).
-
 ---
 
 ## Debug
@@ -1741,10 +1794,6 @@ Enable or disable debug mode. Persists to `localStorage`.
 function setDebugMode(enabled: boolean): void
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `enabled` | `boolean` | Whether to enable debug logging |
-
 ---
 
 ## Utilities
@@ -1777,17 +1826,9 @@ Convert a `snake_case` string to `camelCase`. Also strips invalid characters (no
 function snakeToCamel(str: string): string
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `str` | `string` | The snake_case string to convert |
-
-**Returns:** `string` -- The camelCase equivalent.
-
 **Examples:**
 
 ```ts
-import { snakeToCamel } from '@prabhask5/stellar-engine/utils';
-
 snakeToCamel('goal_lists');    // 'goalLists'
 snakeToCamel('projects');      // 'projects'
 snakeToCamel('user_settings'); // 'userSettings'
@@ -1821,6 +1862,143 @@ import { calculateNewOrder } from '@prabhask5/stellar-engine';
 // items sorted by order: [{ order: 1 }, { order: 2 }, { order: 3 }]
 const newOrder = calculateNewOrder(items, 0, 2);
 // Returns 2.5 (between index 1 and 2)
+```
+
+### `formatBytes(bytes)`
+
+Format a byte count into a human-readable string.
+
+```ts
+function formatBytes(bytes: number): string
+```
+
+**Returns:** Formatted string (e.g., `"45.23 KB"`, `"1.20 MB"`, `"512 B"`).
+
+---
+
+## SQL & TypeScript Generation
+
+> **Subpath:** `@prabhask5/stellar-engine/utils`
+
+Functions to generate complete Supabase SQL and TypeScript interfaces from a declarative `SchemaDefinition`. These eliminate the need to hand-write SQL -- the schema in code becomes the single source of truth.
+
+### `generateSupabaseSQL(schema, options?)`
+
+Generate complete Supabase SQL from a schema definition. Produces CREATE TABLE statements, RLS policies, triggers, indexes, and realtime subscriptions.
+
+```ts
+function generateSupabaseSQL(
+  schema: SchemaDefinition,
+  options?: SQLGenerationOptions
+): string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `schema` | `SchemaDefinition` | The declarative schema definition |
+| `options` | `SQLGenerationOptions` | Optional generation options |
+
+**`SQLGenerationOptions`:**
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `appName` | `string` | -- | Application name for SQL comments |
+| `includeCRDT` | `boolean` | `false` | Include CRDT document storage table |
+| `includeDeviceVerification` | `boolean` | `true` | Include `trusted_devices` table |
+| `includeHelperFunctions` | `boolean` | `true` | Include helper functions (`set_user_id`, `update_updated_at`) |
+
+**Example:**
+
+```ts
+import { generateSupabaseSQL } from '@prabhask5/stellar-engine/utils';
+
+const sql = generateSupabaseSQL({
+  tasks: 'project_id, order',
+  projects: 'is_current, order',
+}, { appName: 'My App', includeCRDT: true });
+
+console.log(sql); // Full SQL ready to run in Supabase SQL editor
+```
+
+### `inferColumnType(fieldName)`
+
+Infer a SQL column type from a field name using naming conventions. The engine uses consistent field naming patterns, so the column type can be reliably determined from the field suffix or exact name.
+
+```ts
+function inferColumnType(fieldName: string): string
+```
+
+| Pattern | SQL Type |
+|---------|----------|
+| `*_id` | `uuid` |
+| `*_at` | `timestamptz` |
+| `order` | `double precision default 0` |
+| `completed`, `deleted`, `active`, `is_*` | `boolean default false` |
+| `_version` | `integer default 1` |
+| `date` | `date` |
+| `*_count`, `*_value`, `*_size`, `*_ms`, `*_duration` | `integer default 0` |
+| everything else | `text` |
+
+### `generateMigrationSQL(oldSchema, newSchema)`
+
+Diff two schema definitions and produce ALTER TABLE migration SQL. Handles table additions, removals, column additions, removals, and type changes.
+
+```ts
+function generateMigrationSQL(
+  oldSchema: SchemaDefinition,
+  newSchema: SchemaDefinition
+): string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `oldSchema` | `SchemaDefinition` | The previous schema version |
+| `newSchema` | `SchemaDefinition` | The new schema version |
+
+**Returns:** SQL string with ALTER statements, or empty string if no changes detected. Supports `renamedFrom` and `renamedColumns` hints for non-destructive renames.
+
+### `generateTypeScript(schema, options?)`
+
+Generate TypeScript interfaces and enum types from a schema definition. Only tables with a `fields` property in their config are included.
+
+```ts
+function generateTypeScript(
+  schema: SchemaDefinition,
+  options?: TypeScriptGenerationOptions
+): string
+```
+
+**`TypeScriptGenerationOptions`:**
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `header` | `string` | Auto-generated comment | Header comment at the top of the file |
+| `includeSystemColumns` | `boolean` | `true` | Include system columns (id, user_id, etc.) in interfaces |
+
+**Example:**
+
+```ts
+import { generateTypeScript } from '@prabhask5/stellar-engine/utils';
+
+const ts = generateTypeScript({
+  tasks: {
+    indexes: 'project_id, order',
+    fields: {
+      title: 'string',
+      completed: 'boolean',
+      priority: ['low', 'medium', 'high'],
+    },
+  },
+});
+// Generates:
+// export type TaskPriority = 'low' | 'medium' | 'high';
+// export interface Task {
+//   id: string;
+//   title: string;
+//   completed: boolean;
+//   priority: TaskPriority;
+//   ...system columns...
+// }
 ```
 
 ---
@@ -1871,7 +2049,7 @@ function remoteChangeAnimation(
 
 ### `trackEditing`
 
-Svelte action for form elements that tracks editing state. Defers remote changes while a manual-save form is open.
+Svelte action for form elements that tracks editing state. Defers remote changes while a manual-save form is open so the user does not see disruptive updates mid-edit.
 
 ```ts
 function trackEditing(
@@ -1914,37 +2092,13 @@ function triggerLocalAnimation(
 ): void
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `element` | `HTMLElement \| null` | Target DOM element |
-| `actionType` | `RemoteActionType` | Animation type to apply |
-
-**Example:**
-
-```svelte
-<script>
-  import { triggerLocalAnimation } from '@prabhask5/stellar-engine';
-  let element;
-
-  function handleToggle() {
-    triggerLocalAnimation(element, 'toggle');
-  }
-</script>
-
-<div bind:this={element} on:click={handleToggle}>
-  Toggle me
-</div>
-```
-
 ### `truncateTooltip`
 
-Svelte action that adds a native title tooltip when text content overflows its container (is truncated by CSS `text-overflow: ellipsis`).
+Svelte action that adds a native title tooltip when text content overflows its container (is truncated by CSS `text-overflow: ellipsis`). Uses `ResizeObserver` to detect overflow.
 
 ```ts
 function truncateTooltip(node: HTMLElement): SvelteActionReturn
 ```
-
-The action uses `ResizeObserver` to detect when the element's `scrollWidth` exceeds its `clientWidth`, and sets the `title` attribute to the full text content. When the text is no longer truncated, the title is removed.
 
 **Example:**
 
@@ -1958,9 +2112,7 @@ The action uses `ResizeObserver` to detect when the element's `scrollWidth` exce
 
 ## Svelte Components
 
-The engine ships two ready-to-use Svelte 5 components. These are full components with script, template, and styles. They use CSS custom properties (`--color-primary`, `--color-text`, etc.) for theming.
-
-**Note:** `UpdatePrompt` is NOT a stellar-engine component export. It is generated by `stellar-engine install pwa` at `src/lib/components/UpdatePrompt.svelte` with TODO UI placeholders, importing `monitorSwLifecycle` and `handleSwUpdate` from `@prabhask5/stellar-engine/kit`.
+The engine ships three ready-to-use Svelte 5 components. They use CSS custom properties (`--color-primary`, `--color-text`, etc.) for theming.
 
 ### `SyncStatus`
 
@@ -1976,8 +2128,6 @@ Animated sync-state indicator button with tooltip and mobile refresh.
 - Expandable error details panel with per-entity error cards
 - Mobile refresh button (visible < 640px)
 - `prefers-reduced-motion` support
-
-**Internal imports:** `syncStatusStore`, `isOnline`, `runFullSync`, `SyncStatus` type, `SyncError` type, `RealtimeState` type
 
 **Usage:**
 ```svelte
@@ -2010,16 +2160,11 @@ Notification banner for cross-device data conflicts. Shows when another device p
 **Features:**
 - Polls `remoteChangesStore` every 500ms for deferred changes
 - Animated expand/collapse via `grid-template-rows` transition
-- Field-by-field diff preview (old → new values)
+- Field-by-field diff preview (old to new values)
 - Update / Dismiss / Show Changes actions
-- Responsive layout for mobile and tablet
 
 **Usage:**
 ```svelte
-<script lang="ts">
-  import DeferredChangesBanner from '@prabhask5/stellar-engine/components/DeferredChangesBanner';
-</script>
-
 <DeferredChangesBanner
   entityId={item.id}
   entityType="tasks"
@@ -2031,23 +2176,26 @@ Notification banner for cross-device data conflicts. Shows when another device p
 />
 ```
 
+### `DemoBanner`
+
+> **Import:** `import DemoBanner from '@prabhask5/stellar-engine/components/DemoBanner'`
+
+Fixed-position banner at bottom center. Shows "Demo Mode -- Changes reset on refresh" with a dismiss button. Only renders when `isDemoMode()` returns `true`. Glass morphism styling, z-index 9000.
+
+**Usage:**
+```svelte
+<script lang="ts">
+  import DemoBanner from '@prabhask5/stellar-engine/components/DemoBanner';
+</script>
+
+<DemoBanner />
+```
+
 ### `UpdatePrompt` (generated, not exported)
 
 > **Generated by:** `stellar-engine install pwa` at `src/lib/components/UpdatePrompt.svelte`
-> **Import in your app:** `import UpdatePrompt from '$lib/components/UpdatePrompt.svelte'`
 
-Service-worker update notification component. Generated with fully wired SW lifecycle logic but TODO placeholder UI.
-
-**Engine functions used:**
-- `monitorSwLifecycle(callbacks)` from `@prabhask5/stellar-engine/kit` — comprehensive SW monitoring (6 detection strategies including iOS PWA support)
-- `handleSwUpdate()` from `@prabhask5/stellar-engine/kit` — sends `SKIP_WAITING`, waits for `controllerchange`, reloads
-
-**Generated script logic:**
-- `onMount`: calls `monitorSwLifecycle({ onUpdateAvailable })` to detect waiting workers
-- `onDestroy`: cleanup function from `monitorSwLifecycle`
-- `handleRefresh()`: calls `handleSwUpdate()` to activate the new SW and reload
-- `handleDismiss()`: hides the prompt (update applies on next visit)
-- UI template: TODO placeholder for developer to implement
+Service-worker update notification component. Generated with fully wired SW lifecycle logic but TODO placeholder UI. Uses `monitorSwLifecycle` and `handleSwUpdate` from `@prabhask5/stellar-engine/kit`.
 
 ---
 
@@ -2059,28 +2207,48 @@ Service-worker update notification component. Generated with fully wired SW life
 
 #### `getServerConfig()`
 
-Returns runtime Supabase configuration from environment variables for the `/api/config` endpoint.
+Returns runtime Supabase configuration from environment variables for the `/api/config` endpoint. Reads from `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` env vars.
 
 ```ts
 function getServerConfig(): ServerConfig
 ```
 
-**Returns:** `{ supabaseUrl, supabaseAnonKey, configured }` read from `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` env vars.
+**`ServerConfig`:**
+
+```ts
+interface ServerConfig {
+  configured: boolean;                         // true when both env vars are set
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+}
+```
 
 #### `deployToVercel(config)`
 
-Deploy environment variables to a Vercel project. Used by the `/api/setup/deploy` endpoint.
+Deploy environment variables to a Vercel project. Upserts env vars and triggers a production redeployment via the Vercel REST API.
 
 ```ts
 async function deployToVercel(config: DeployConfig): Promise<DeployResult>
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `config.vercelToken` | `string` | Vercel API token |
-| `config.projectId` | `string` | Vercel project ID |
-| `config.supabaseUrl` | `string` | Supabase project URL |
-| `config.supabaseAnonKey` | `string` | Supabase anonymous key |
+**`DeployConfig`:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `vercelToken` | `string` | Vercel personal access token |
+| `projectId` | `string` | Vercel project ID |
+| `supabaseUrl` | `string` | Supabase project URL |
+| `supabaseAnonKey` | `string` | Supabase anonymous key |
+
+**`DeployResult`:**
+
+```ts
+interface DeployResult {
+  success: boolean;
+  deploymentUrl?: string;                      // Only on success
+  error?: string;                              // Only on failure
+}
+```
 
 #### `createValidateHandler()`
 
@@ -2096,10 +2264,18 @@ function createValidateHandler(): RequestHandler
 
 #### `resolveRootLayout(url)`
 
-Root layout load function helper. Initializes config, resolves auth state, starts sync engine.
+Root layout load function helper. Initializes config, resolves auth state, starts sync engine. When in demo mode, seeds demo data automatically.
 
 ```ts
 function resolveRootLayout(url: URL): Promise<RootLayoutData>
+```
+
+**`RootLayoutData`:**
+
+```ts
+interface RootLayoutData extends AuthStateResult {
+  singleUserSetUp?: boolean;
+}
 ```
 
 #### `resolveProtectedLayout(url)`
@@ -2110,19 +2286,38 @@ Protected layout load function helper. Checks auth and redirects to login if una
 function resolveProtectedLayout(url: URL): Promise<ProtectedLayoutData>
 ```
 
+**`ProtectedLayoutData`:**
+
+```ts
+interface ProtectedLayoutData {
+  session: Session | null;
+  authMode: AuthMode;
+  offlineProfile: OfflineCredentials | null;
+}
+```
+
 #### `resolveSetupAccess()`
 
-Setup page load function helper. Checks config and session status.
+Setup page load function helper. Checks config and session status. Returns data telling the setup page whether this is a first-time configuration or a reconfiguration.
 
 ```ts
 function resolveSetupAccess(): Promise<SetupAccessData>
+```
+
+**`SetupAccessData`:**
+
+```ts
+interface SetupAccessData {
+  isReconfigure: boolean;
+  hasSession: boolean;
+}
 ```
 
 ### Email Confirmation
 
 #### `handleEmailConfirmation(tokenHash, type)`
 
-Verify an email confirmation token. Used on the `/confirm` page.
+Verify an email confirmation token. Handles OTP verification, device trust (for device-verification flows), and error translation into user-friendly messages.
 
 ```ts
 async function handleEmailConfirmation(
@@ -2131,9 +2326,18 @@ async function handleEmailConfirmation(
 ): Promise<ConfirmResult>
 ```
 
+**`ConfirmResult`:**
+
+```ts
+interface ConfirmResult {
+  success: boolean;
+  error?: string;                              // User-friendly error message (only on failure)
+}
+```
+
 #### `broadcastAuthConfirmed(channelName, type)`
 
-Broadcast auth confirmation to other tabs via BroadcastChannel.
+Broadcast auth confirmation to other tabs via BroadcastChannel. Used on the confirm page to notify the originating tab that confirmation succeeded.
 
 ```ts
 async function broadcastAuthConfirmed(
@@ -2142,37 +2346,541 @@ async function broadcastAuthConfirmed(
 ): Promise<'can_close' | 'no_broadcast'>
 ```
 
+**Returns:** `'can_close'` if the broadcast was sent (tab can close itself), or `'no_broadcast'` if BroadcastChannel is unavailable.
+
 ### Service Worker Helpers
 
 #### `pollForNewServiceWorker(options?)`
 
-Poll for a new service worker after a deployment.
+Poll for a new service worker after a deployment. Calls `registration.update()` on each tick until a waiting worker is found.
 
 ```ts
-function pollForNewServiceWorker(options?: PollOptions): void
+function pollForNewServiceWorker(options?: PollOptions): () => void
+```
+
+**`PollOptions`:**
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `intervalMs` | `number` | `5000` | Polling interval in milliseconds |
+| `maxAttempts` | `number` | `60` | Maximum polling attempts (~5 minutes at default interval) |
+| `onFound` | `() => void` | -- | Callback when a new waiting SW is detected |
+
+**Returns:** A cleanup function that stops polling.
+
+#### `handleSwUpdate()`
+
+Sends `SKIP_WAITING` to the waiting service worker, listens for `controllerchange`, then reloads the page. Falls back to a simple reload if no waiting worker is found.
+
+```ts
+async function handleSwUpdate(): Promise<void>
 ```
 
 #### `monitorSwLifecycle(callbacks)`
 
-Monitor the service worker lifecycle with callbacks for state changes.
+Comprehensive passive monitoring of the service worker lifecycle. Uses six different detection strategies for maximum reliability across browsers and platforms (including iOS PWA quirks).
 
 ```ts
-function monitorSwLifecycle(callbacks: SwLifecycleCallbacks): void
+function monitorSwLifecycle(callbacks: SwLifecycleCallbacks): () => void
 ```
+
+**`SwLifecycleCallbacks`:**
+
+```ts
+interface SwLifecycleCallbacks {
+  onUpdateAvailable: () => void;               // Called when any detection strategy finds an update
+}
+```
+
+**Returns:** A cleanup function that removes all listeners.
 
 ### Auth Hydration
 
 #### `hydrateAuthState(data)`
 
-Hydrate the `authState` store from layout load data. Call in `$effect()` inside `+layout.svelte`.
+Hydrate the `authState` store from layout load data. Call in `$effect()` inside `+layout.svelte` so it re-runs whenever layout data changes.
 
 ```ts
 function hydrateAuthState(data: AuthLayoutData): void
 ```
 
+**`AuthLayoutData`:**
+
+```ts
+interface AuthLayoutData {
+  authMode: AuthMode;                          // 'supabase' | 'offline' | 'demo' | 'none'
+  session: Session | null;
+  offlineProfile: OfflineCredentials | null;
+}
+```
+
+**Example:**
+
+```svelte
+<script lang="ts">
+  import { hydrateAuthState } from '@prabhask5/stellar-engine/kit';
+  let { data } = $props();
+  $effect(() => { hydrateAuthState(data); });
+</script>
+```
+
 ---
 
-## Install PWA Command
+## Demo Mode
+
+Demo mode provides a completely isolated sandbox for consumer apps. When active, the app uses a separate Dexie database (`${name}_demo`), makes zero Supabase connections, and skips all sync/auth/email/device-verification flows. Writes go to the sandboxed DB and are dropped on page refresh (mock data is re-seeded).
+
+### `isDemoMode()`
+
+Check whether demo mode is currently active. SSR-safe (returns `false` on server).
+
+```ts
+function isDemoMode(): boolean
+```
+
+### `setDemoMode(enabled)`
+
+Activate or deactivate demo mode via localStorage flag. **Caller must trigger a full page reload** after calling this to ensure complete engine teardown and reinitialization.
+
+```ts
+function setDemoMode(enabled: boolean): void
+```
+
+### `seedDemoData()`
+
+Seed the demo database with mock data using the consumer-provided `seedData` callback. Idempotent per page load (no-ops if already seeded). Called automatically by `resolveRootLayout()` when in demo mode.
+
+```ts
+async function seedDemoData(): Promise<void>
+```
+
+### `cleanupDemoDatabase(dbName)`
+
+Delete the demo Dexie database entirely. Call when deactivating demo mode for a clean exit.
+
+```ts
+async function cleanupDemoDatabase(dbName: string): Promise<void>
+```
+
+### `getDemoConfig()`
+
+Get the registered demo configuration, or `null` if demo mode is not configured.
+
+```ts
+function getDemoConfig(): DemoConfig | null
+```
+
+### `DemoConfig`
+
+```ts
+interface DemoConfig {
+  seedData: (db: Dexie) => Promise<void>;      // Callback to populate demo DB with mock data
+  mockProfile: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    [key: string]: unknown;
+  };
+}
+```
+
+---
+
+## CRDT Collaborative Editing
+
+> **Import:** `@prabhask5/stellar-engine/crdt`
+
+Optional Yjs-based CRDT subsystem for real-time collaborative document editing. Enable by adding `crdt: {}` (or `crdt: true`) to `initEngine()`. Consumers never need to install `yjs` directly -- all necessary Yjs types and constructors are re-exported.
+
+### Configuration
+
+#### `CRDTConfig`
+
+All fields optional with defaults:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `supabaseTable` | `string` | `'crdt_documents'` | Supabase table name |
+| `columns` | `string` | `'id,page_id,...'` | SELECT columns for egress optimization |
+| `persistIntervalMs` | `number` | `30000` | Supabase persist interval |
+| `broadcastDebounceMs` | `number` | `100` | Broadcast debounce window |
+| `localSaveDebounceMs` | `number` | `5000` | IndexedDB full-state save debounce |
+| `cursorDebounceMs` | `number` | `50` | Cursor/presence update debounce |
+| `maxOfflineDocuments` | `number` | `50` | Max docs stored offline |
+| `maxBroadcastPayloadBytes` | `number` | `250000` | Chunk threshold |
+| `syncPeerTimeoutMs` | `number` | `3000` | Sync protocol timeout |
+| `maxReconnectAttempts` | `number` | `5` | Max channel reconnect attempts |
+| `reconnectBaseDelayMs` | `number` | `1000` | Exponential backoff base |
+
+#### `isCRDTEnabled()`
+
+Check whether the CRDT subsystem was configured. Available from the root import.
+
+```ts
+function isCRDTEnabled(): boolean
+```
+
+### Document Lifecycle
+
+#### `openDocument(documentId, pageId, options?)`
+
+Open a collaborative CRDT document. Idempotent -- returns existing provider if already open.
+
+```ts
+async function openDocument(
+  documentId: string,
+  pageId: string,
+  options?: OpenDocumentOptions
+): Promise<CRDTProvider>
+```
+
+**`OpenDocumentOptions`:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `offlineEnabled` | `boolean` | Persist to IndexedDB for offline access (default: `false`) |
+| `initialPresence` | `{ name: string; avatarUrl?: string }` | Announce presence on join |
+
+**`CRDTProvider`:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `doc` | `Y.Doc` | The Yjs document instance |
+| `documentId` | `string` | Unique identifier |
+| `pageId` | `string` | Associated page/entity |
+| `connectionState` | `'disconnected' \| 'connecting' \| 'connected'` | Current state |
+| `isDirty` | `boolean` | Unsaved changes exist |
+| `destroy()` | `Promise<void>` | Close and clean up |
+
+#### `closeDocument(documentId)`
+
+Close a specific document. Saves final state and leaves the realtime channel.
+
+```ts
+async function closeDocument(documentId: string): Promise<void>
+```
+
+#### `closeAllDocuments()`
+
+Close all active documents. Called automatically on sign-out.
+
+```ts
+async function closeAllDocuments(): Promise<void>
+```
+
+### Document Type Helpers
+
+#### `createSharedText(doc, name?)`
+
+Get or create a shared text type on a Yjs document.
+
+```ts
+function createSharedText(doc: Y.Doc, name?: string): Y.Text
+```
+
+Default name: `'text'`.
+
+#### `createSharedXmlFragment(doc, name?)`
+
+Get or create a shared XML fragment (for rich text editors).
+
+```ts
+function createSharedXmlFragment(doc: Y.Doc, name?: string): Y.XmlFragment
+```
+
+Default name: `'content'`.
+
+#### `createSharedArray<T>(doc, name?)`
+
+Get or create a shared array.
+
+```ts
+function createSharedArray<T>(doc: Y.Doc, name?: string): Y.Array<T>
+```
+
+Default name: `'array'`.
+
+#### `createSharedMap<T>(doc, name?)`
+
+Get or create a shared map.
+
+```ts
+function createSharedMap<T>(doc: Y.Doc, name?: string): Y.Map<T>
+```
+
+Default name: `'map'`.
+
+#### `createBlockDocument(doc)`
+
+Set up a standard block document structure with `content` (XML fragment for block tree) and `meta` (map for document metadata).
+
+```ts
+function createBlockDocument(doc: Y.Doc): {
+  content: Y.XmlFragment;
+  meta: Y.Map<unknown>;
+}
+```
+
+### Yjs Re-exports
+
+Consumers do not need to install `yjs` directly. The following are re-exported from `@prabhask5/stellar-engine/crdt`:
+
+- `YDoc` -- `Y.Doc` constructor (runtime export)
+- `YText`, `YXmlFragment`, `YArray`, `YMap`, `YXmlElement` -- Yjs type aliases (type-only exports)
+
+### Awareness / Presence
+
+#### `updateCursor(documentId, cursor, selection?)`
+
+Update local user's cursor position. Debounced to `cursorDebounceMs`.
+
+```ts
+function updateCursor(documentId: string, cursor: unknown, selection?: unknown): void
+```
+
+#### `getCollaborators(documentId)`
+
+Get current remote collaborators (excludes local user).
+
+```ts
+function getCollaborators(documentId: string): UserPresenceState[]
+```
+
+#### `onCollaboratorsChange(documentId, callback)`
+
+Subscribe to collaborator join/leave/cursor changes.
+
+```ts
+function onCollaboratorsChange(
+  documentId: string,
+  callback: (collaborators: UserPresenceState[]) => void
+): () => void
+```
+
+**Returns:** Unsubscribe function.
+
+#### `assignColor(userId)`
+
+Deterministic color assignment from userId hash (12-color palette).
+
+```ts
+function assignColor(userId: string): string
+```
+
+#### `UserPresenceState`
+
+```ts
+interface UserPresenceState {
+  userId: string;
+  name: string;
+  avatarUrl?: string;
+  color: string;
+  cursor?: unknown;
+  selection?: unknown;
+  deviceId: string;
+  lastActiveAt: string;
+}
+```
+
+### Offline Management
+
+#### `enableOffline(pageId, documentId)`
+
+Enable offline access for a document. Saves current state to IndexedDB. Throws if the offline document limit is reached or if called offline without an open provider.
+
+```ts
+async function enableOffline(pageId: string, documentId: string): Promise<void>
+```
+
+#### `disableOffline(pageId, documentId)`
+
+Remove a document from offline storage.
+
+```ts
+async function disableOffline(pageId: string, documentId: string): Promise<void>
+```
+
+#### `isOfflineEnabled(documentId)`
+
+Check if a document is stored for offline access.
+
+```ts
+async function isOfflineEnabled(documentId: string): Promise<boolean>
+```
+
+#### `getOfflineDocuments()`
+
+List all offline-enabled documents.
+
+```ts
+async function getOfflineDocuments(): Promise<CRDTDocumentRecord[]>
+```
+
+#### `loadDocumentByPageId(pageId)`
+
+Look up a CRDT document record by page ID.
+
+```ts
+async function loadDocumentByPageId(pageId: string): Promise<CRDTDocumentRecord | undefined>
+```
+
+### Persistence (Advanced)
+
+#### `persistDocument(documentId, doc)`
+
+Manually persist a document's Yjs state to Supabase.
+
+```ts
+async function persistDocument(documentId: string, doc: Y.Doc): Promise<void>
+```
+
+#### `persistAllDirty()`
+
+Persist all active dirty documents to Supabase.
+
+```ts
+async function persistAllDirty(): Promise<void>
+```
+
+### CRDT Diagnostics
+
+#### `getCRDTDiagnostics()`
+
+Get diagnostics for the CRDT subsystem (active documents, connection states, offline counts).
+
+```ts
+async function getCRDTDiagnostics(): Promise<CRDTDiagnostics>
+```
+
+---
+
+## Types
+
+> **Subpath:** All types are available from `@prabhask5/stellar-engine/types`.
+
+### `Session`
+
+Re-exported from `@supabase/supabase-js`. Represents a Supabase auth session.
+
+```ts
+import type { Session } from '@prabhask5/stellar-engine/types';
+```
+
+### `SyncOperationItem`
+
+Intent-based sync operation queued for background sync.
+
+```ts
+interface SyncOperationItem {
+  id?: number;                                 // Auto-increment primary key
+  table: string;                               // Supabase table name
+  entityId: string;                            // UUID of the entity
+  operationType: OperationType;                // 'increment' | 'set' | 'create' | 'delete'
+  field?: string;                              // Target field (for increment/single-field set)
+  value?: unknown;                             // Payload (delta, new value, full entity)
+  timestamp: string;                           // ISO 8601 enqueue timestamp
+  retries: number;                             // Failed push attempts (drives backoff)
+  lastRetryAt?: string;                        // ISO 8601 timestamp of last retry
+}
+```
+
+### `OperationType`
+
+```ts
+type OperationType = 'increment' | 'set' | 'create' | 'delete';
+```
+
+### `OfflineCredentials`
+
+```ts
+interface OfflineCredentials {
+  id: string;                                  // Always 'current_user' (singleton)
+  userId: string;                              // Supabase user UUID
+  email: string;
+  password: string;                            // SHA-256 hash of password
+  profile: Record<string, unknown>;
+  cachedAt: string;                            // ISO 8601 timestamp
+}
+```
+
+### `OfflineSession`
+
+```ts
+interface OfflineSession {
+  id: string;                                  // Always 'current_session' (singleton)
+  userId: string;
+  offlineToken: string;                        // Random UUID session token
+  createdAt: string;
+}
+```
+
+### `ConflictHistoryEntry`
+
+```ts
+interface ConflictHistoryEntry {
+  id?: number;
+  entityId: string;
+  entityType: string;
+  field: string;
+  localValue: unknown;
+  remoteValue: unknown;
+  resolvedValue: unknown;
+  winner: 'local' | 'remote' | 'merged';
+  strategy: string;                            // e.g., 'last_write', 'delete_wins'
+  timestamp: string;
+}
+```
+
+### `SyncStatus`
+
+```ts
+type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
+```
+
+### `AuthMode`
+
+```ts
+type AuthMode = 'supabase' | 'offline' | 'demo' | 'none';
+```
+
+### `SingleUserGateType`
+
+```ts
+type SingleUserGateType = 'code' | 'password';
+```
+
+### `SingleUserConfig`
+
+```ts
+interface SingleUserConfig {
+  id: string;                                  // Always 'config' (singleton)
+  gateType: SingleUserGateType;
+  codeLength?: 4 | 6;                         // Only when gateType is 'code'
+  gateHash?: string;                           // SHA-256 hex (kept for offline fallback)
+  email?: string;                              // Real email for Supabase auth
+  profile: Record<string, unknown>;
+  supabaseUserId?: string;
+  setupAt: string;
+  updatedAt: string;
+}
+```
+
+### `FieldType`
+
+```ts
+type FieldType =
+  | string                                     // 'string', 'number?', 'uuid', 'boolean', etc.
+  | string[]                                   // Enum: ['a', 'b', 'c']
+  | { enum: string[]; nullable?: boolean; enumName?: string };
+```
+
+### `AuthConfig`
+
+Simplified flat authentication configuration. See source for full definition.
+
+---
+
+## CLI Commands
 
 ### `stellar-engine install pwa`
 
@@ -2190,8 +2898,8 @@ The wizard collects all required configuration through step-by-step prompts with
 |--------|----------|------------|-------------|
 | App Name | Yes | Non-empty | Full app name (e.g., "Stellar Planner") |
 | Short Name | Yes | Non-empty, under 12 chars | Short name for PWA home screen |
-| Prefix | Yes | Lowercase, starts with letter, no spaces | App prefix for localStorage, SW, debug (auto-suggested from name) |
-| Description | No | — | App description (default: "A self-hosted offline-first PWA") |
+| Prefix | Yes | Lowercase, starts with letter, no spaces | App prefix for localStorage, SW, debug |
+| Description | No | -- | App description |
 
 ### Generated Files (34+)
 
@@ -2211,314 +2919,24 @@ The wizard collects all required configuration through step-by-step prompts with
 
 **Git hooks (1):** `.husky/pre-commit`
 
-### Route File Detail
-
-Each route file's logic is fully implemented using stellar-engine imports. Only the UI (HTML templates, CSS styles) are left as TODO placeholders.
-
-**Fully managed routes (no TODO needed):**
-- `src/routes/api/config/+server.ts` — `getServerConfig()`
-- `src/routes/api/setup/deploy/+server.ts` — `deployToVercel()`
-- `src/routes/api/setup/validate/+server.ts` — `createValidateHandler()`
-- `src/routes/[...catchall]/+page.ts` — redirect to `/`
-- `src/routes/setup/+page.ts` — config + auth checks
-- `src/routes/(protected)/+layout.ts` — auth guard with redirect
-
-**Logic-managed, UI-as-TODO routes:**
-- `src/routes/+layout.ts` — needs `initEngine()` config
-- `src/routes/+layout.svelte` — needs app shell UI, use `<SyncStatus />` and `<UpdatePrompt />`
-- `src/routes/+page.svelte` — needs home page UI
-- `src/routes/+error.svelte` — needs error page UI
-- `src/routes/setup/+page.svelte` — needs setup wizard UI
-- `src/routes/policy/+page.svelte` — needs policy content
-- `src/routes/login/+page.svelte` — needs login UI
-- `src/routes/confirm/+page.svelte` — needs confirmation UI
-- `src/routes/(protected)/+layout.svelte` — needs protected area chrome
-- `src/routes/(protected)/profile/+page.svelte` — needs profile UI
-
 ### Behavior
 
-- **Skip-if-exists**: Files are only written if they don't already exist
+- **Skip-if-exists**: Files are only written if they do not already exist
 - **Auto-installs**: Runs `npm install` and `npx husky init` automatically
 - **Prints summary**: Shows created/skipped file counts and next steps
 
 ---
 
-## Types
-
-> **Subpath:** All types are available from `@prabhask5/stellar-engine/types`.
-
-### `Session`
-
-Re-exported from `@supabase/supabase-js`. Represents a Supabase auth session. Consumers can import this from the engine instead of depending on `@supabase/supabase-js` directly.
-
-```ts
-import type { Session } from '@prabhask5/stellar-engine/types';
-```
-
-### `SyncOperationItem`
-
-Intent-based sync operation queued for background sync.
-
-```ts
-interface SyncOperationItem {
-  id?: number;
-  table: string;
-  entityId: string;
-  operationType: OperationType;
-  field?: string;
-  value?: unknown;
-  timestamp: string;
-  retries: number;
-}
-```
-
-### `OperationType`
-
-```ts
-type OperationType = 'increment' | 'set' | 'create' | 'delete';
-```
-
-### `OfflineCredentials`
-
-```ts
-interface OfflineCredentials {
-  id: string;
-  userId: string;
-  email: string;
-  password: string;
-  profile: Record<string, unknown>;
-  cachedAt: string;
-}
-```
-
-### `OfflineSession`
-
-```ts
-interface OfflineSession {
-  id: string;
-  userId: string;
-  offlineToken: string;
-  createdAt: string;
-}
-```
-
-### `ConflictHistoryEntry`
-
-```ts
-interface ConflictHistoryEntry {
-  id?: number;
-  entityId: string;
-  entityType: string;
-  field: string;
-  localValue: unknown;
-  remoteValue: unknown;
-  resolvedValue: unknown;
-  winner: 'local' | 'remote' | 'merged';
-  strategy: string;
-  timestamp: string;
-}
-```
-
-### `SyncStatus`
-
-```ts
-type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
-```
-
-### `AuthMode`
-
-```ts
-type AuthMode = 'supabase' | 'offline' | 'none';
-```
-
-### `SingleUserGateType`
-
-```ts
-type SingleUserGateType = 'code' | 'password';
-```
-
-### `SingleUserConfig`
-
-Configuration record stored in IndexedDB for single-user mode. Singleton with `id: 'config'`.
-
-```ts
-interface SingleUserConfig {
-  id: string;                          // Always 'config' (singleton)
-  gateType: SingleUserGateType;        // 'code' or 'password'
-  codeLength?: 4 | 6;                  // Only when gateType is 'code'
-  gateHash?: string;                   // SHA-256 hex (deprecated — kept for offline fallback)
-  email?: string;                      // Real email for Supabase email/password auth
-  profile: Record<string, unknown>;    // App-specific profile
-  supabaseUserId?: string;             // User ID (set after first online setup)
-  setupAt: string;
-  updatedAt: string;
-}
-```
-
----
-
-## Demo Mode
-
-### `isDemoMode(): boolean`
-Check whether demo mode is currently active. SSR-safe (returns `false` on server).
-
-### `setDemoMode(enabled: boolean): void`
-Activate or deactivate demo mode via localStorage flag. **Caller must trigger a full page reload** after calling this.
-
-### `seedDemoData(): Promise<void>`
-Seed the demo database with mock data. Idempotent per page load (no-ops if already seeded). Called automatically by `resolveRootLayout()` when in demo mode.
-
-### `cleanupDemoDatabase(dbName: string): Promise<void>`
-Delete the demo Dexie database entirely. Call when deactivating demo mode for a clean exit.
-
-### `DemoConfig` Interface
-```ts
-interface DemoConfig {
-  seedData: (db: Dexie) => Promise<void>;
-  mockProfile: {
-    email: string;
-    firstName: string;
-    lastName: string;
-    [key: string]: unknown;
-  };
-}
-```
-
-### `SyncEngineConfig.demo`
-Optional `DemoConfig` passed to `initEngine()`. When provided, enables the demo mode system.
-
-### `DemoBanner` Component
-Import: `@prabhask5/stellar-engine/components/DemoBanner`
-
-Fixed-position banner at bottom center. Shows "Demo Mode — Changes reset on refresh" with a dismiss button. Only renders when `isDemoMode()` returns `true`. Glass morphism styling, z-index 9000.
-
-### `AuthMode` Type
-Updated to include `'demo'`: `'supabase' | 'offline' | 'demo' | 'none'`
-
----
-
-## CRDT Collaborative Editing
-
-Import: `@prabhask5/stellar-engine/crdt`
-
-Optional Yjs-based CRDT subsystem for real-time collaborative document editing. Enable by adding `crdt: {}` to `initEngine()`.
-
-### Configuration
-
-#### `CRDTConfig`
-All fields optional with defaults:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `supabaseTable` | `string` | `'crdt_documents'` | Supabase table name |
-| `columns` | `string` | `'id,page_id,...'` | SELECT columns for egress optimization |
-| `persistIntervalMs` | `number` | `30000` | Supabase persist interval |
-| `broadcastDebounceMs` | `number` | `100` | Broadcast debounce window |
-| `localSaveDebounceMs` | `number` | `5000` | IndexedDB full-state save debounce |
-| `cursorDebounceMs` | `number` | `50` | Cursor/presence update debounce |
-| `maxOfflineDocuments` | `number` | `50` | Max docs stored offline |
-| `maxBroadcastPayloadBytes` | `number` | `250000` | Chunk threshold |
-| `syncPeerTimeoutMs` | `number` | `3000` | Sync protocol timeout |
-| `maxReconnectAttempts` | `number` | `5` | Max channel reconnect attempts |
-| `reconnectBaseDelayMs` | `number` | `1000` | Exponential backoff base |
-
-### Document Lifecycle
-
-#### `openDocument(documentId, pageId, options?): Promise<CRDTProvider>`
-Open a collaborative CRDT document. Idempotent — returns existing provider if already open.
-
-**Options:**
-- `offlineEnabled?: boolean` — Persist to IndexedDB for offline access (default: `false`)
-- `initialPresence?: { name: string; avatarUrl?: string }` — Announce presence on join
-
-**Returns:** `CRDTProvider` with:
-- `doc: Y.Doc` — The Yjs document instance
-- `documentId: string` — Unique identifier
-- `pageId: string` — Associated page/entity
-- `connectionState: 'disconnected' | 'connecting' | 'connected'`
-- `isDirty: boolean` — Unsaved changes
-- `destroy(): Promise<void>` — Close and clean up
-
-#### `closeDocument(documentId): Promise<void>`
-Close a specific document. Saves final state and leaves channel.
-
-#### `closeAllDocuments(): Promise<void>`
-Close all active documents. Called automatically on sign-out.
-
-### Document Type Helpers
-
-#### `createSharedText(doc, name?): Y.Text`
-Get or create a shared text type. Default name: `'text'`.
-
-#### `createSharedXmlFragment(doc, name?): Y.XmlFragment`
-Get or create a shared XML fragment. Default name: `'content'`.
-
-#### `createSharedArray<T>(doc, name?): Y.Array<T>`
-Get or create a shared array. Default name: `'array'`.
-
-#### `createSharedMap<T>(doc, name?): Y.Map<T>`
-Get or create a shared map. Default name: `'map'`.
-
-#### `createBlockDocument(doc): { content: Y.XmlFragment; meta: Y.Map<unknown> }`
-Set up a standard block document structure with `content` (block tree) and `meta` (document metadata).
-
-### Yjs Re-exports
-
-- `YDoc` — `Y.Doc` constructor
-- `YText`, `YXmlFragment`, `YArray`, `YMap`, `YXmlElement` — Yjs type aliases (type-only)
-
-### Awareness / Presence
-
-#### `updateCursor(documentId, cursor, selection?): void`
-Update local user's cursor position. Debounced to `cursorDebounceMs`.
-
-#### `getCollaborators(documentId): UserPresenceState[]`
-Get current remote collaborators (excludes local user).
-
-#### `onCollaboratorsChange(documentId, callback): () => void`
-Subscribe to collaborator join/leave/cursor changes. Returns unsubscribe function.
-
-#### `assignColor(userId): string`
-Deterministic color assignment from userId hash (12-color palette).
-
-#### `UserPresenceState`
-```ts
-interface UserPresenceState {
-  userId: string;
-  name: string;
-  avatarUrl?: string;
-  color: string;
-  cursor?: unknown;
-  selection?: unknown;
-  deviceId: string;
-  lastActiveAt: string;
-}
-```
-
-### Offline Management
-
-#### `enableOffline(pageId, documentId): Promise<void>`
-Enable offline access for a document. Saves current state to IndexedDB. Throws if limit reached or offline without open provider.
-
-#### `disableOffline(pageId, documentId): Promise<void>`
-Remove a document from offline storage.
-
-#### `isOfflineEnabled(documentId): Promise<boolean>`
-Check if a document is stored for offline access.
-
-#### `getOfflineDocuments(): Promise<CRDTDocumentRecord[]>`
-List all offline-enabled documents.
-
-#### `loadDocumentByPageId(pageId): Promise<CRDTDocumentRecord | undefined>`
-Look up a CRDT document record by page ID.
-
-### Persistence (Advanced)
-
-#### `persistDocument(documentId, doc): Promise<void>`
-Manually persist a document's state to Supabase.
-
-#### `persistAllDirty(): Promise<void>`
-Persist all active dirty documents to Supabase.
-
-### `isCRDTEnabled(): boolean`
-Check whether the CRDT subsystem was configured (available from root import).
+## Re-exports
+
+The following types are re-exported from third-party dependencies so consumers do not need to install them directly:
+
+| Type | Source Package | Description |
+|------|---------------|-------------|
+| `Session` | `@supabase/supabase-js` | Supabase auth session object |
+| `YDoc` | `yjs` | Yjs document constructor (from `@prabhask5/stellar-engine/crdt`) |
+| `YText` | `yjs` | Yjs shared text type (type-only, from `crdt` subpath) |
+| `YXmlFragment` | `yjs` | Yjs XML fragment type (type-only, from `crdt` subpath) |
+| `YArray` | `yjs` | Yjs shared array type (type-only, from `crdt` subpath) |
+| `YMap` | `yjs` | Yjs shared map type (type-only, from `crdt` subpath) |
+| `YXmlElement` | `yjs` | Yjs XML element type (type-only, from `crdt` subpath) |

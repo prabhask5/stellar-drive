@@ -2,534 +2,914 @@
 
 The `@prabhask5/stellar-engine` package is an offline-first, local-first sync engine for web applications. It handles bidirectional synchronization between a local IndexedDB database and a remote Supabase PostgreSQL backend, using intent-based operations, operation coalescing, and three-tier conflict resolution. The engine is designed to be consumed by any frontend application; Svelte integration is provided as an optional peer dependency.
 
+This document explains each underlying technology from scratch, assuming no prior knowledge, and then describes how stellar-engine uses it.
+
 ---
 
 ## Table of Contents
 
-1. [Dexie.js / IndexedDB (Local Database)](#1-dexiejs--indexeddb-local-database)
-2. [Supabase (Backend-as-a-Service)](#2-supabase-backend-as-a-service)
-3. [Sync System (Custom Sync Engine)](#3-sync-system-custom-sync-engine)
-4. [Svelte (Optional Peer Dependency)](#4-svelte-optional-peer-dependency)
-5. [TypeScript (Language)](#5-typescript-language)
+1. [IndexedDB (Browser Database)](#1-indexeddb-browser-database)
+2. [Dexie.js (IndexedDB Wrapper)](#2-dexiejs-indexeddb-wrapper)
+3. [Supabase (Backend-as-a-Service)](#3-supabase-backend-as-a-service)
+4. [Svelte (UI Framework)](#4-svelte-ui-framework)
+5. [SvelteKit (Application Framework)](#5-sveltekit-application-framework)
+6. [Yjs (CRDT Library)](#6-yjs-crdt-library)
 
 ---
 
-## 1. Dexie.js / IndexedDB (Local Database)
+## 1. IndexedDB (Browser Database)
 
 ### What is IndexedDB?
 
-IndexedDB is a database built into every modern web browser. Unlike `localStorage` (which only stores strings), IndexedDB is a full object database that can store complex JavaScript objects, supports indexes for fast queries, and can hold megabytes of data. It is asynchronous (non-blocking) and works entirely offline.
+IndexedDB is a full NoSQL database built into every modern web browser. When you open Chrome, Firefox, Safari, or Edge, there is already a complete database engine running inside it -- you do not need to install anything. Every website or web application can create its own database that lives on the user's device, completely separate from the server.
+
+Think of it like having a local SQLite database, but inside the browser.
+
+### How IndexedDB Differs from localStorage
+
+You may have heard of `localStorage`, which is a simpler key-value store in the browser. IndexedDB is fundamentally different:
+
+| Feature | localStorage | IndexedDB |
+|---------|-------------|-----------|
+| Data types | Strings only | Any JavaScript object (objects, arrays, dates, blobs, files) |
+| Storage limit | ~5-10 MB | Typically 50% of available disk space (can be gigabytes) |
+| Querying | Get by key only | Indexes, ranges, cursors for complex queries |
+| Transactions | No | Yes -- atomic read-write operations |
+| Async/Sync | Synchronous (blocks the page) | Asynchronous (non-blocking) |
+| Structured data | Must JSON.stringify everything | Stores objects natively |
+
+### Key Concepts
+
+**Object Stores** are like tables in a SQL database. Each object store holds a collection of records. For example, you might have a `tasks` object store that holds all your task records, and a `projects` object store that holds all your projects. You define object stores when you create the database.
+
+**Keys** are the primary identifier for each record in an object store, like a primary key in SQL. Every record must have a unique key. Keys can be auto-generated (auto-incrementing numbers) or you can provide your own (like UUIDs).
+
+**Indexes** allow fast lookups on fields other than the primary key. Without an index, finding all tasks where `completed === true` would require scanning every record. With an index on `completed`, the database can jump directly to the matching records. You create indexes when you define the object store.
+
+**Transactions** group multiple operations into an atomic unit. Either all operations in a transaction succeed, or they all fail and the database rolls back to its previous state. This prevents corrupted or partial data. For example, if you need to write to two tables simultaneously, a transaction ensures both writes happen or neither does.
+
+**Cursors** let you iterate over the results of a query one record at a time. This is useful when you have many records and do not want to load them all into memory at once.
+
+### Why IndexedDB is Asynchronous
+
+IndexedDB is fully asynchronous, meaning operations do not block the browser's main thread. When you ask IndexedDB to read or write data, it returns immediately and notifies you when the operation is complete (via callbacks or events). This is critical because the browser's main thread also handles user interactions, animations, and rendering. If a database read took 100ms and blocked the main thread, the page would freeze for 100ms -- buttons would not respond, animations would stutter.
+
+The raw IndexedDB API uses a request/event pattern:
+
+```javascript
+const request = objectStore.get('some-key');
+request.onsuccess = (event) => {
+  const result = event.target.result;
+  // use result here
+};
+request.onerror = (event) => {
+  // handle error
+};
+```
+
+### Storage Limits
+
+IndexedDB storage limits are browser-dependent, but modern browsers typically allow a site to use up to 50% of the available disk space. On a device with 100 GB free, that is potentially 50 GB of IndexedDB storage. This is far more than localStorage's 5-10 MB limit.
+
+### When Data is Cleared
+
+IndexedDB data persists across browser restarts, system reboots, and updates. It is **not** cleared when the user closes the browser. However, it can be lost in two situations:
+
+1. The user manually clears browser data (Settings > Clear Browsing Data).
+2. The browser evicts data under extreme storage pressure (very low disk space). Browsers use a "best-effort" policy for storage and may evict the least-recently-used site's data. You can prevent this by requesting **persistent storage** via the Storage API (`navigator.storage.persist()`), which tells the browser to keep this site's data even under pressure.
+
+### Why Dexie.js is Needed (Raw IndexedDB Example)
+
+Here is what it looks like to add a single record using the raw IndexedDB API:
+
+```javascript
+// Open (or create) a database
+const openRequest = indexedDB.open('MyDatabase', 1);
+
+openRequest.onupgradeneeded = (event) => {
+  const db = event.target.result;
+  // Create an object store with an auto-incrementing key
+  const store = db.createObjectStore('tasks', { keyPath: 'id' });
+  // Create an index on the 'completed' field
+  store.createIndex('by_completed', 'completed');
+};
+
+openRequest.onsuccess = (event) => {
+  const db = event.target.result;
+
+  // Start a read-write transaction
+  const transaction = db.transaction('tasks', 'readwrite');
+  const store = transaction.objectStore('tasks');
+
+  // Add a record
+  const addRequest = store.add({
+    id: 'task-1',
+    name: 'Buy groceries',
+    completed: false
+  });
+
+  addRequest.onsuccess = () => {
+    console.log('Task added successfully');
+  };
+
+  addRequest.onerror = () => {
+    console.error('Failed to add task');
+  };
+
+  transaction.oncomplete = () => {
+    console.log('Transaction finished');
+  };
+};
+
+openRequest.onerror = () => {
+  console.error('Failed to open database');
+};
+```
+
+That is over 30 lines of nested callbacks just to add one record. Querying, updating, and managing schema versions are even more verbose. This is why virtually every application that uses IndexedDB does so through a wrapper library like Dexie.js.
+
+---
+
+## 2. Dexie.js (IndexedDB Wrapper)
 
 ### What is Dexie.js?
 
-Dexie.js is a wrapper library around IndexedDB that provides a friendlier API. Raw IndexedDB requires verbose, callback-based code with request objects and event handlers. Dexie replaces that with a clean, Promise-based API that supports queries, transactions, and live queries (reactive queries that automatically re-run when data changes).
+Dexie.js is a minimalist, Promise-based wrapper around IndexedDB. It takes the verbose, callback-heavy raw IndexedDB API and replaces it with a clean, modern API that supports `async`/`await`, method chaining, and intuitive query syntax. The name "Dexie" is short for "IndexedDB" (inDeXiEdb).
 
-### System Tables Used by the Engine
+### Why Dexie Exists
 
-The engine requires five system tables in the consumer application's Dexie database. These are local-only and never synced to the server:
+As shown in the IndexedDB section above, the raw API requires deeply nested callbacks, manual transaction management, and verbose event handling. Dexie solves all of this:
 
-| Table | Schema | Purpose |
-|-------|--------|---------|
-| `syncQueue` | `++id, table, entityId, timestamp` | **Outbox** for pending sync operations. Auto-incrementing ID ensures FIFO ordering. Stores intent-based operations (create/set/increment/delete) that are pushed to the server in background. |
-| `offlineCredentials` | `id` | **Singleton** (`id = 'current_user'`). Caches user email, password, and profile for offline login and reconnect credential validation. |
-| `offlineSession` | `id` | **Singleton** (`id = 'current_session'`). Stores an offline session token (UUID) so the app can authenticate users locally when the network is unavailable. |
-| `singleUserConfig` | `id` | **Singleton** (`id = 'config'`). Stores single-user mode configuration: gate hash (SHA-256 for offline fallback), gate type, email, profile, and Supabase user ID. Only used when `auth.mode` is `'single-user'`. |
-| `conflictHistory` | `++id, entityId, entityType, timestamp` | **Diagnostic log** of field-level conflict resolutions. Records which fields conflicted, the local/remote values, the resolved value, and the strategy used. Automatically cleaned up after 30 days. |
-
-### The Repository Pattern
-
-The engine does not own entity tables. Consumer applications define their own Dexie schema and entity tables, then implement repository functions that use the engine's queue operations. The pattern is:
-
-1. **Write to local DB** (IndexedDB via Dexie) -- instant, no network required
-2. **Queue a sync operation** (into the `syncQueue` table) -- records the intent
-3. **Schedule a sync push** (tells the engine to push soon) -- debounced background work
-
-These three steps are wrapped in a single Dexie transaction to guarantee atomicity:
-
-```typescript
-import { queueCreateOperation, scheduleSyncPush, markEntityModified } from '@prabhask5/stellar-engine';
-import { db } from './schema'; // Consumer's Dexie database
-
-export async function createItem(name: string) {
-  const newItem = { id: crypto.randomUUID(), name, created_at: new Date().toISOString() };
-
-  // Atomic transaction: local write + queue entry succeed or fail together
-  await db.transaction('rw', [db.items, db.syncQueue], async () => {
-    await db.items.add(newItem);
-    await queueCreateOperation('items', newItem.id, { name, created_at: newItem.created_at });
-  });
-
-  markEntityModified(newItem.id);  // Protect from being overwritten by pull
-  scheduleSyncPush();              // Tell sync engine to push soon
-
-  return newItem;
-}
+```javascript
+// Raw IndexedDB: ~35 lines of nested callbacks
+// Dexie: 1 line
+await db.tasks.add({ id: 'task-1', name: 'Buy groceries', completed: false });
 ```
 
-The engine exports queue helpers for all four operation types:
+### Key Concepts
 
-- `queueCreateOperation(table, entityId, payload)` -- new entity
-- `queueSetOperation(table, entityId, field, value)` -- set a single field
-- `queueMultiFieldSetOperation(table, entityId, fields)` -- set multiple fields
-- `queueIncrementOperation(table, entityId, field, delta)` -- increment a numeric field
-- `queueDeleteOperation(table, entityId)` -- soft-delete
+#### Database Creation
 
-### Schema Versioning
+You create a Dexie database by instantiating the class and declaring your schema:
 
-The engine does not manage the consumer's Dexie schema versions. Consumer applications define their own `this.version(N).stores({...})` chain, including both their entity tables and the five system tables listed above. When adding a new entity table or modifying indexes, the consumer bumps the version number and provides an upgrade function. Dexie handles the migration automatically when the database is opened.
+```javascript
+import Dexie from 'dexie';
 
-### Transactions
+const db = new Dexie('MyAppDatabase');
 
-Dexie transactions are critical for the engine's correctness guarantee: **if data is written locally, a sync operation is always queued for it**. The `'rw'` (read-write) transaction mode ensures that both the entity write and the queue entry either both succeed or both roll back. The engine also uses transactions internally for batch operations like coalescing, pull-phase merges, and tombstone cleanup.
-
----
-
-## 2. Supabase (Backend-as-a-Service)
-
-### What is Supabase?
-
-Supabase is an open-source backend platform that provides:
-
-- **PostgreSQL database** -- stores all synced user data on the server.
-- **Authentication** -- email/password auth with session management, token refresh, and PKCE flow.
-- **Realtime** -- WebSocket-based subscriptions that push database changes to connected clients in real time.
-- **Row Level Security (RLS)** -- PostgreSQL policies that ensure users can only read/write their own data, enforced at the database level.
-- **REST API** -- auto-generated CRUD endpoints for every table (powered by PostgREST).
-
-Supabase is self-hostable. The engine is designed for applications where users deploy their own Supabase instance.
-
-### Runtime Configuration
-
-The engine uses runtime configuration instead of build-time environment variables. This allows a single build artifact to be deployed against different Supabase instances.
-
-**`src/runtime/runtimeConfig.ts`** (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/src/runtime/runtimeConfig.ts`):
-
-```typescript
-export interface AppConfig {
-  supabaseUrl: string;      // e.g., https://your-project.supabase.co
-  supabaseAnonKey: string;  // Public anonymous key
-  configured: boolean;
-}
-```
-
-The configuration lifecycle:
-
-1. `initConfig()` -- tries localStorage first for instant load, then fetches from the server (`/api/config`) to validate/update. If offline, falls back to cached config.
-2. `getConfig()` -- synchronous getter, returns cached config or loads from localStorage.
-3. `waitForConfig()` -- async, resolves when config is available.
-4. `setConfig(config)` -- used after initial setup wizard completes.
-5. `clearConfigCache()` -- clears localStorage cache.
-
-All keys are prefixed with a configurable app prefix (e.g., `stellar_config`) to avoid collisions when multiple apps share the same origin.
-
-### Proxy-Based Lazy Supabase Client
-
-**`src/supabase/client.ts`** (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/src/supabase/client.ts`):
-
-The Supabase client uses a **Proxy-based lazy singleton** pattern. Consumer code imports `supabase` and uses it directly; the actual `SupabaseClient` is created on first property access, after runtime config is available:
-
-```typescript
-let realClient: SupabaseClient | null = null;
-
-function getOrCreateClient(): SupabaseClient {
-  if (realClient) return realClient;
-  const config = getConfig();
-  realClient = createClient(url, key, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-      storageKey: `${prefix}-auth`,
-      flowType: 'pkce'
-    }
-  });
-  return realClient;
-}
-
-export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
-  get(_target, prop, receiver) {
-    const client = getOrCreateClient();
-    const value = Reflect.get(client, prop, receiver);
-    if (typeof value === 'function') return value.bind(client);
-    return value;
-  }
+db.version(1).stores({
+  tasks: 'id, completed, created_at',
+  projects: 'id, name'
 });
 ```
 
-This avoids initialization-order issues. The `getSupabaseAsync()` function is also exported for contexts where config may not yet be loaded.
+The `new Dexie('MyAppDatabase')` creates (or opens) a database named "MyAppDatabase". The `.version(1).stores({...})` call declares what object stores (tables) exist and what indexes they have.
 
-### Auth Features
+#### Schema Declaration (String-Based Index Syntax)
 
-The engine provides a full auth module (`src/supabase/auth.ts`) with:
+Dexie uses a compact string syntax to declare indexes. The string lists the primary key first, followed by any secondary indexes, separated by commas:
 
-- **PKCE flow** -- more secure than implicit flow, works well with PWAs.
-- **Auto token refresh** -- Supabase client is configured with `autoRefreshToken: true`; tokens are refreshed before expiry.
-- **Corrupted data cleanup** -- on startup, any malformed Supabase auth data in localStorage (keys starting with `sb-`) is detected and cleared. An unhandled rejection handler catches runtime auth errors and auto-recovers.
-- **iOS PWA detection** -- detects standalone mode (`navigator.standalone` or `display-mode: standalone` media query) and applies enhanced auth persistence. iOS can evict localStorage data when the PWA is backgrounded; the engine logs these events for debugging.
-- **Offline credential caching** -- on successful login, credentials are cached in IndexedDB (`offlineCredentials` table). On reconnect after offline use, credentials are re-validated before sync is allowed.
-- **Single-user email/password auth** -- the user provides a real email during setup. The PIN code or password is padded to meet Supabase's minimum password length and used as the actual Supabase password via `supabase.auth.signUp()` / `supabase.auth.signInWithPassword()`. This gives the user a real `auth.uid()` for RLS compliance. Optional email confirmation (`emailConfirmation.enabled`) and device verification (`deviceVerification.enabled`) add security layers. Email changes are supported via `changeSingleUserEmail()` which triggers a Supabase confirmation email flow.
-- **Session management** -- `getSession()`, `isSessionExpired()`, offline session fallback from localStorage.
-- **Profile management** -- configurable `profileExtractor` and `profileToMetadata` functions in engine config for app-specific profile shapes.
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `'id'` | `id` is the primary key | `tasks: 'id'` |
+| `'++id'` | `id` is auto-incrementing | `logs: '++id, timestamp'` |
+| `'&email'` | `email` must be unique | `users: 'id, &email'` |
+| `'name'` | Non-unique index on `name` | `tasks: 'id, name, completed'` |
+| `'[firstName+lastName]'` | Compound index | `users: 'id, [firstName+lastName]'` |
 
-### Realtime: WebSocket Subscriptions
+Important: the schema string only declares the **primary key and indexes**. You can store any fields you want on the objects -- only indexed fields need to be listed. An object with 20 fields only needs to list the 3-4 fields you want to query by.
 
-**`src/realtime.ts`** (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/src/realtime.ts`):
+#### CRUD Operations
 
-The engine uses Supabase Realtime (PostgreSQL Changes over WebSocket) for instant multi-device sync. Design decisions:
+Dexie provides intuitive methods for Create, Read, Update, and Delete:
 
-1. **Single consolidated channel per user** -- one WebSocket channel (`{prefix}_sync_{userId}`) subscribes to all configured entity tables. This is more efficient than one channel per table.
-2. **Echo suppression** -- each record carries a `device_id`. Changes from the current device are ignored to prevent echo.
-3. **Duplicate prevention** -- recently processed entities are tracked with a 2-second TTL map, preventing the same change from being applied by both realtime and polling.
-4. **Conflict-aware** -- incoming realtime changes go through the same three-tier conflict resolution engine as polled changes.
-5. **Graceful degradation** -- if the WebSocket fails, it retries with exponential backoff (1s, 2s, 4s, 8s, 16s) up to 5 attempts, then falls back to polling only.
-6. **Offline-aware** -- reconnection attempts are paused while offline (`pauseRealtime()`) and resumed when the browser fires the `online` event.
+```javascript
+// CREATE -- add a new record (fails if key already exists)
+await db.tasks.add({ id: 'task-1', name: 'Buy groceries', completed: false });
+
+// READ -- get a single record by primary key
+const task = await db.tasks.get('task-1');
+
+// UPDATE -- put replaces the entire record (upsert: insert or update)
+await db.tasks.put({ id: 'task-1', name: 'Buy groceries', completed: true });
+
+// DELETE -- remove by primary key
+await db.tasks.delete('task-1');
+
+// BULK OPERATIONS -- efficient batch writes
+await db.tasks.bulkPut([
+  { id: 'task-1', name: 'Task one', completed: false },
+  { id: 'task-2', name: 'Task two', completed: false },
+  { id: 'task-3', name: 'Task three', completed: true }
+]);
+```
+
+#### Queries
+
+Dexie provides a fluent query API for filtering and sorting:
+
+```javascript
+// Exact match on an indexed field
+const completedTasks = await db.tasks.where('completed').equals(true).toArray();
+
+// Range queries
+const recentTasks = await db.tasks.where('created_at').above('2024-01-01').toArray();
+const rangeTasks = await db.tasks.where('priority').between(1, 5).toArray();
+
+// Get all records from a table
+const allTasks = await db.tasks.toArray();
+
+// Count records
+const count = await db.tasks.where('completed').equals(false).count();
+
+// Filter with a function (works on non-indexed fields too, but slower)
+const filtered = await db.tasks.filter(task => task.name.includes('grocery')).toArray();
+```
+
+The `.where()` method uses indexes for fast lookups. The `.filter()` method scans all records, so it works on any field but is slower for large datasets.
+
+#### Transactions
+
+Dexie transactions ensure atomicity -- either all operations succeed or none do:
+
+```javascript
+await db.transaction('rw', [db.tasks, db.syncQueue], async () => {
+  // Both of these must succeed, or both roll back
+  await db.tasks.add({ id: 'task-1', name: 'New task', completed: false });
+  await db.syncQueue.add({ table: 'tasks', entityId: 'task-1', operationType: 'create' });
+
+  // If this line throws, BOTH writes above are rolled back
+  if (someCondition) throw new Error('Abort!');
+});
+```
+
+The `'rw'` means read-write mode. The array `[db.tasks, db.syncQueue]` lists which tables the transaction touches. If any operation inside the callback throws an error, the entire transaction is automatically rolled back.
+
+#### Table References
+
+You can access tables in two ways:
+
+```javascript
+// Dot notation (convenient, only works if table name is a valid JavaScript identifier)
+await db.tasks.get('task-1');
+
+// Method call (works for any table name, including those with special characters)
+await db.table('tasks').get('task-1');
+```
+
+#### Version Upgrades
+
+When your app evolves and you need to add tables or indexes, you bump the version number:
+
+```javascript
+const db = new Dexie('MyAppDatabase');
+
+// Original schema
+db.version(1).stores({
+  tasks: 'id, completed'
+});
+
+// Add a new 'projects' table and a new index on tasks
+db.version(2).stores({
+  tasks: 'id, completed, projectId',
+  projects: 'id, name'
+});
+
+// Data migration: populate a new field on existing records
+db.version(3).stores({
+  tasks: 'id, completed, projectId, priority'
+}).upgrade(async tx => {
+  // Set default priority for all existing tasks
+  await tx.table('tasks').toCollection().modify(task => {
+    task.priority = task.priority ?? 3;
+  });
+});
+```
+
+Dexie handles the migration automatically when the database is opened. Each version only needs to declare the tables/indexes that **changed** -- unchanged tables are carried forward.
+
+### How stellar-engine Uses Dexie
+
+- **Auto-creates and manages the Dexie instance** via `initEngine()`. Consumer apps do not need to create their own Dexie database; the engine creates it based on the provided configuration.
+- **System tables auto-merged** into every schema version. The engine requires five internal tables (`syncQueue`, `offlineCredentials`, `offlineSession`, `singleUserConfig`, `conflictHistory`) and automatically adds them to the consumer's schema definition.
+- **All CRUD operations go through Dexie transactions.** Every local write is paired with a sync queue entry inside a single transaction, guaranteeing that if the data is written locally, a sync operation is always queued for it.
+- **Schema-driven mode** auto-generates Dexie store definitions from `SchemaDefinition` objects. Instead of writing Dexie schema strings by hand, consumers declare their schema as structured TypeScript objects, and the engine generates the Dexie index strings.
+- **System indexes auto-appended** to every user table: `id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`. These are required for sync, conflict resolution, and soft-delete filtering.
 
 ---
 
-## 3. Sync System (Custom Sync Engine)
+## 3. Supabase (Backend-as-a-Service)
 
-### Overview
+### What is Supabase?
 
-The sync system is the core of this package. It enables offline-first multi-device operation using an **outbox pattern** with **intent-based operations** and **three-tier conflict resolution**.
+Supabase is an open-source alternative to Firebase. It provides a complete backend for your application -- database, authentication, real-time subscriptions, file storage, and auto-generated APIs -- all built on top of PostgreSQL, the world's most advanced open-source relational database.
 
-```
-+------------------+          +-------------------+          +------------------+
-|   User Action    |          |   Sync Engine     |          |   Supabase       |
-|                  |          |                   |          |   (PostgreSQL)   |
-|  1. Write to     |  push    |  3. Read outbox   |  HTTP    |                  |
-|     IndexedDB    |--------->|  4. Transform ops  |--------->|  5. Apply to DB  |
-|  2. Queue to     |          |     to mutations  |          |                  |
-|     syncQueue    |          |                   |  pull    |                  |
-|                  |<---------|  6. Pull changes   |<---------|  7. Return delta |
-|  8. Merge into   |          |     since cursor  |          |                  |
-|     IndexedDB    |          |                   |          |                  |
-+------------------+          +-------------------+          +------------------+
-                                      |
-                                      | WebSocket
-                                      v
-                              +-------------------+
-                              |  Realtime Layer   |
-                              |  (instant push    |
-                              |   from other      |
-                              |   devices)        |
-                              +-------------------+
+Instead of building your own server, writing your own authentication system, designing your own API, and managing your own database, you can point your frontend directly at Supabase and get all of these out of the box. Supabase is self-hostable, meaning you can run it on your own server instead of using their hosted service.
+
+### Key Services
+
+#### PostgreSQL Database
+
+At the core of Supabase is a full PostgreSQL database. PostgreSQL is a relational database, meaning data is organized into tables with columns and rows, similar to a spreadsheet but far more powerful:
+
+```sql
+-- A table definition in PostgreSQL
+CREATE TABLE tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id),
+  name TEXT NOT NULL,
+  completed BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
 ```
 
-### The Five Rules of Local-First Sync
+PostgreSQL supports:
+- **Tables** with typed columns (text, numbers, booleans, dates, JSON, arrays)
+- **Foreign keys** that link tables together (a task belongs to a project)
+- **Joins** that combine data from multiple tables in a single query
+- **Constraints** that enforce data integrity (required fields, unique values)
+- **Functions and triggers** that run custom logic inside the database
 
-From the engine header comment (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/src/engine.ts`):
+#### Authentication
 
-```
-1. All reads come from local DB (IndexedDB)
-2. All writes go to local DB first, immediately
-3. Every write creates a pending operation in the outbox
-4. Sync loop ships outbox to server in background
-5. On refresh, load local state instantly, then run background sync
-```
+Supabase provides a complete authentication system out of the box:
 
-### Intent-Based Operations
+- **Email/password** -- traditional signup and login
+- **OAuth providers** -- "Sign in with Google/GitHub/etc."
+- **Magic links** -- passwordless login via email link
+- **OTP verification** -- one-time passcode sent via email or SMS
+- **Session management** -- JWTs (JSON Web Tokens) with automatic refresh
 
-Instead of syncing raw data diffs, the engine records the **intent** of each user action. This preserves semantic meaning during conflict resolution and enables operation coalescing.
+When a user signs up, Supabase creates a record in its internal `auth.users` table and returns a session token. This token is sent with every subsequent request to identify the user.
 
-There are four operation types:
+#### Realtime
 
-| Operation | Intent | Example |
-|-----------|--------|---------|
-| `create` | A new entity was created | User creates a new task |
-| `set` | A field (or fields) was explicitly set to a value | User renames a task |
-| `increment` | A numeric field was incremented by a delta | User taps +1 on a counter |
-| `delete` | An entity was soft-deleted | User deletes a task |
+Supabase Realtime uses WebSockets to push database changes to connected clients instantly. A WebSocket is a persistent, two-way connection between the browser and server (unlike HTTP, which is request-response). When a record is inserted, updated, or deleted in the database, Supabase broadcasts the change to all subscribed clients within milliseconds.
 
-The `increment` operation is particularly important. Instead of recording "current_value is now 5," it records "current_value was incremented by +1." This allows the coalescing engine to sum deltas locally (e.g., 50 rapid +1 taps become a single +50 operation).
+This enables features like:
+- Live dashboards that update without page refresh
+- Collaborative editing where you see other users' changes instantly
+- Multi-device sync where changes on your phone appear on your laptop immediately
 
-Each operation is stored in the `syncQueue` table:
+#### Row Level Security (RLS)
 
-```typescript
-interface SyncOperationItem {
-  id?: number;           // Auto-increment queue ID
-  table: string;         // Target table (e.g., 'goals')
-  entityId: string;      // UUID of the entity
-  operationType: 'create' | 'set' | 'increment' | 'delete';
-  field?: string;        // Specific field (for set/increment)
-  value?: unknown;       // New value or delta
-  timestamp: string;     // ISO timestamp
-  retries: number;       // Number of push attempts
-}
-```
+RLS is a PostgreSQL feature that restricts which rows a user can see or modify, enforced at the database level. This is more secure than application-level access control because even if someone bypasses your frontend code, the database itself refuses unauthorized access:
 
-### Operation Coalescing
+```sql
+-- Policy: users can only see their own tasks
+CREATE POLICY "Users see own tasks" ON tasks
+  FOR SELECT
+  USING (user_id = auth.uid());
 
-Before pushing, the queue is coalesced to minimize server requests. Coalescing is performed entirely in memory with a single DB read and batch write at the end.
-
-**`src/queue.ts`** (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/src/queue.ts`):
-
-The 11 coalescing rules, organized in 6 steps:
-
-```
-Step 1-2: Entity-level coalescing
-  Rule 1:  CREATE -> DELETE                → Cancel both (entity never existed on server)
-  Rule 2:  CREATE -> UPDATE(s) -> DELETE   → Cancel all (net effect is nothing)
-  Rule 3:  UPDATE(s) -> DELETE             → Keep only DELETE
-  Rule 4:  CREATE -> SET(s)               → Merge sets into create payload
-  Rule 5:  CREATE -> INCREMENT(s)         → Sum deltas into create payload
-
-Step 3: Increment coalescing
-  Rule 6:  Multiple INCREMENTs (same field) → Sum deltas (e.g., +1, +1, +1 = +3)
-
-Step 4: Set coalescing
-  Rule 7:  Multiple SETs (same entity)      → Merge into single set (last value wins)
-
-Step 5: Field interaction coalescing
-  Rule 8:  SET followed by INCREMENT(s) on same field → Add delta to set value
-  Rule 9:  Operations before last SET on same field   → Delete (overwritten)
-
-Step 6: No-op removal
-  Rule 10: Zero-delta increments           → Delete (no effect)
-  Rule 11: Empty sets or updated_at-only   → Delete (no meaningful change)
+-- Policy: users can only insert tasks for themselves
+CREATE POLICY "Users insert own tasks" ON tasks
+  FOR INSERT
+  WITH CHECK (user_id = auth.uid());
 ```
 
-### Push/Pull Sync Cycle
+`auth.uid()` is a PostgreSQL function that returns the currently authenticated user's ID from their JWT token. With these policies, User A can never read or write User B's data, no matter what API calls they make.
 
-The sync engine (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/src/engine.ts`) runs a push/pull cycle:
+#### REST API (PostgREST)
 
-```
-SYNC CYCLE
-==========
+Supabase automatically generates a complete REST API for every table in your database. You do not need to write any server-side code. If you have a `tasks` table, you immediately get endpoints for creating, reading, updating, and deleting tasks. The API respects RLS policies, so it is secure by default.
 
-1. PUSH PHASE (local -> server)
-   a. Pre-flight auth validation (getCurrentUserId)
-   b. Coalesce pending operations
-   c. For each operation in the outbox:
-      - Transform to Supabase mutation (insert/update/delete)
-      - Execute against Supabase REST API with .select() verification
-      - On success: remove from outbox
-      - On failure: increment retry counter (max 5 retries, exponential backoff)
-   d. Singleton reconciliation: if server has a different ID for a singleton
-      entity, reconcile the local ID and purge stale queue entries
+#### Storage
 
-2. PULL PHASE (server -> local)
-   a. Pull all tables in parallel (egress optimization)
-   b. For each remote record:
-      * Skip if recently modified locally (2s protection window)
-      * Skip if recently processed by realtime (prevents duplicate)
-      * If no local entity: accept remote
-      * If remote is not newer: skip
-      * If no pending ops: accept remote
-      * If has pending ops: run through conflict resolution
-   c. Update the sync cursor to the latest timestamp (per-user)
-   d. Egress optimization: skip pull when realtime is healthy (push-only mode)
+Supabase Storage provides file upload and management. You can upload images, documents, or any other files, organize them into buckets, and control access with policies similar to RLS.
 
-3. POST-SYNC
-   a. Clean up failed items (> 5 retries)
-   b. Clean up old tombstones (configurable, default 1 day)
-   c. Clean up old conflict history (> 30 days)
-   d. Clean up recently modified entity cache
-   e. Update sync status store (for UI indicator)
-   f. Notify registered callbacks (stores refresh from local DB)
+### JavaScript Client Library
+
+The `@supabase/supabase-js` library is the official client for interacting with Supabase from JavaScript or TypeScript:
+
+```javascript
+import { createClient } from '@supabase/supabase-js';
+
+// Create a client with your project URL and public anonymous key
+const supabase = createClient(
+  'https://your-project.supabase.co',
+  'your-anon-key'
+);
 ```
 
-Additional sync features:
-- **Mutex lock** with 60-second timeout and watchdog to prevent concurrent syncs and detect stuck operations.
-- **Operation timeouts** (45 seconds per push/pull phase).
-- **Hydration**: on first load with empty local DB, pulls all non-deleted records.
-- **Reconciliation**: after re-login, detects orphaned local changes (modified after cursor but no queue entries) and re-queues them.
-- **Tab visibility**: skips background sync when tab is hidden; runs quiet sync on return if away > 5 minutes and realtime is disconnected.
-- **Online reconnect cooldown** (configurable, default 2 minutes): prevents redundant syncs on frequent iOS PWA network transitions.
-- **Egress monitoring**: tracks bytes and records per table per sync cycle, with debug utilities exposed on `window`.
+**Querying data:**
 
-### Three-Tier Conflict Resolution
+```javascript
+// Select all tasks for the current user (RLS handles filtering automatically)
+const { data, error } = await supabase.from('tasks').select('*');
 
-**`src/conflicts.ts`** (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/src/conflicts.ts`):
+// Select with filters
+const { data } = await supabase
+  .from('tasks')
+  .select('*')
+  .eq('completed', false)       // WHERE completed = false
+  .order('created_at', { ascending: false })  // ORDER BY created_at DESC
+  .limit(10);                   // LIMIT 10
 
-When the pull phase (or realtime) finds a remote record that conflicts with a local record, the conflict resolution engine applies three tiers:
+// Insert a record
+const { data, error } = await supabase
+  .from('tasks')
+  .insert({ name: 'New task', completed: false })
+  .select();  // Return the inserted record
 
-```
-CONFLICT RESOLUTION TIERS
-==========================
+// Update a record
+const { data, error } = await supabase
+  .from('tasks')
+  .update({ completed: true })
+  .eq('id', 'task-1')
+  .select();
 
-Tier 1: NON-OVERLAPPING CHANGES (different entities)
-  -> Auto-merge. No conflict. Each entity is independent.
-
-Tier 2: DIFFERENT FIELDS on the same entity
-  -> Auto-merge fields. If Device A changed "name" and Device B
-     changed "completed," both changes are kept.
-
-Tier 3: SAME FIELD on the same entity
-  -> Apply resolution strategy:
-
-     a. PENDING LOCAL OPS: If the field has pending local operations
-        that haven't been pushed yet, local wins. The push will
-        send the latest local value.
-
-     b. DELETE WINS: If either side deleted the entity, the delete
-        wins. This prevents resurrection of deleted entities.
-
-     c. LAST-WRITE-WINS: Compare updated_at timestamps. The more
-        recent write wins. If timestamps are identical, use device_id
-        as a deterministic tiebreaker (lower device_id wins).
+// Delete a record
+const { error } = await supabase
+  .from('tasks')
+  .delete()
+  .eq('id', 'task-1');
 ```
 
-Per-table configuration allows customizing conflict behavior:
-- `excludeFromConflict`: fields to skip during conflict resolution (in addition to defaults: `id`, `user_id`, `created_at`, `_version`).
-- `numericMergeFields`: fields eligible for numeric merge (currently resolved via last-write-wins; true delta merge would require an operation inbox on the server).
+**Authentication:**
 
-Conflict resolutions are recorded in the `conflictHistory` table:
+```javascript
+// Sign up a new user
+const { data, error } = await supabase.auth.signUp({
+  email: 'user@example.com',
+  password: 'securepassword'
+});
 
-```typescript
-interface ConflictHistoryEntry {
-  entityId: string;
-  entityType: string;
-  field: string;
-  localValue: unknown;
-  remoteValue: unknown;
-  resolvedValue: unknown;
-  winner: 'local' | 'remote' | 'merged';
-  strategy: string;  // 'last_write' | 'numeric_merge' | 'delete_wins' | 'local_pending'
-  timestamp: string;
-}
+// Sign in an existing user
+const { data, error } = await supabase.auth.signInWithPassword({
+  email: 'user@example.com',
+  password: 'securepassword'
+});
+
+// Get the current session (includes the JWT and user info)
+const { data: { session } } = await supabase.auth.getSession();
 ```
 
-### Realtime Subscriptions
+**Realtime subscriptions:**
 
-See the [Supabase Realtime section](#realtime-websocket-subscriptions) above. The realtime layer feeds into the same conflict resolution engine. Realtime changes also trigger remote change recording for UI animations (via `remoteChangesStore`), with action type detection based on which fields changed (e.g., `completed` changed = toggle, `current_value` changed = increment/decrement, `order` changed = reorder).
+```javascript
+// Subscribe to changes on the tasks table
+supabase
+  .channel('tasks-changes')
+  .on('postgres_changes', {
+    event: '*',          // INSERT, UPDATE, DELETE, or * for all
+    schema: 'public',
+    table: 'tasks'
+  }, (payload) => {
+    console.log('Change received:', payload);
+    // payload.new = the new record, payload.old = the previous record
+  })
+  .subscribe();
+```
 
-### Tombstone System
+### How stellar-engine Uses Supabase
 
-The engine uses soft deletes exclusively. Entities are never hard-deleted from the local database or the server during normal operation. Instead, a `deleted: true` flag is set:
-
-- **Why**: a hard delete cannot be synced (the record is gone), but a soft delete is just an update that flows through the normal sync pipeline.
-- **Queries**: consumer applications filter out soft-deleted records (e.g., `items.filter(item => !item.deleted)`).
-- **Cleanup**: tombstones are periodically cleaned up from both local IndexedDB and Supabase. The `tombstoneMaxAgeDays` config (default: 1 day) controls the cutoff. Server cleanup runs at most once per 24 hours to avoid unnecessary requests.
-- **Entity metadata**: every entity carries `updated_at` (ISO timestamp, for conflict resolution), `_version` (numeric, incremented on conflict merge), `device_id` (last modifier, for tiebreaking), and `deleted` (boolean soft-delete flag).
+- **REST API for push/pull sync operations.** The engine pushes local changes to the server via Supabase's REST API (insert, update, upsert) and pulls remote changes by querying for records updated since the last sync cursor.
+- **Realtime for instant cross-device updates.** The engine subscribes to PostgreSQL changes via Supabase Realtime, so when Device A pushes a change, Device B receives it within milliseconds via WebSocket instead of waiting for the next poll.
+- **Auth for email/password authentication** (including single-user PIN mode). The engine uses Supabase Auth for user registration, login, session management, and token refresh. In single-user mode, the PIN or password is padded and used as a real Supabase password, giving the user a real `auth.uid()` for RLS compliance.
+- **RLS policies enforce per-user data access.** Every table uses `user_id = auth.uid()` policies so users can only access their own data, enforced at the database level.
+- **Broadcast for CRDT document sync.** Supabase Realtime Broadcast (a pub/sub channel not tied to database tables) is used to send Yjs document updates between collaborating clients in real time.
+- **Presence for collaborative cursor tracking.** Supabase Realtime Presence tracks which users are currently viewing or editing a document, enabling features like showing collaborator cursors.
 
 ---
 
-## 4. Svelte (Optional Peer Dependency)
+## 4. Svelte (UI Framework)
 
-Svelte is listed as an **optional peer dependency** in `package.json`. The core sync functionality (engine, queue, conflicts, realtime, auth, config) works without Svelte. However, if Svelte is available, the engine provides reactive stores and DOM actions for UI integration.
+### What is Svelte?
 
-### Svelte Stores
+Svelte is a UI framework for building web applications. If you have used React or Vue, Svelte fills the same role -- it lets you build interactive user interfaces with components, reactive state, and declarative templates. But Svelte has one fundamental difference: **it is a compiler, not a runtime**.
 
-The engine exports four Svelte stores built with `writable` and `derived` from `svelte/store`:
+### The Compiler Difference
 
-| Store | File | Purpose |
-|-------|------|---------|
-| `syncStatusStore` | `src/stores/sync.ts` | Tracks sync status (`idle`/`syncing`/`error`/`offline`), pending count, error messages, last sync time, tab visibility, and realtime connection state. Includes minimum syncing display time (500ms) to prevent UI flickering. |
-| `authState` | `src/stores/authState.ts` | Tracks authentication mode (`supabase`/`offline`/`none`), current session, offline profile, loading state, and auth-kicked messages. Also exports `isAuthenticated` and `userDisplayInfo` as derived stores. |
-| `isOnline` | `src/stores/network.ts` | Reactive boolean tracking network connectivity. Provides `onReconnect()` and `onDisconnect()` callback registration. Handles iOS PWA-specific visibility change events. |
-| `remoteChangesStore` | `src/stores/remoteChanges.ts` | Manages incoming remote changes for UI animation. Detects action types (create/delete/toggle/increment/decrement/reorder/rename/update) from field-level diffs. Supports editing state tracking and deferred change application for modal forms. |
+In React, when your application runs in the browser, the entire React library is loaded and running. It maintains a "virtual DOM" (an in-memory copy of the page structure), and every time state changes, React diffs the virtual DOM against the real DOM to figure out what to update. This is clever but adds overhead -- both in bundle size (React itself is ~40 KB) and in runtime performance (diffing takes CPU time).
 
-### Svelte Actions
+Svelte takes a completely different approach. At build time (when you run `npm run build`), the Svelte compiler reads your component files and generates minimal, highly optimized JavaScript that directly manipulates the DOM. There is no virtual DOM, no diffing, and no framework runtime loaded in the browser. The generated code is typically smaller and faster than the equivalent React code.
 
-The engine exports three Svelte actions from `src/actions/remoteChange.ts`:
+Think of it this way:
+- **React/Vue**: ships a general-purpose engine to the browser, which interprets your components at runtime
+- **Svelte**: compiles your components into specialized code at build time, so only the exact DOM operations needed are shipped to the browser
 
-**`remoteChangeAnimation`** -- attaches to list items or cards to automatically animate when remote changes arrive:
+### Svelte 5 (Current Version, Used by stellar-engine)
+
+Svelte 5 introduced a new reactivity system called **Runes**. Runes are special functions (prefixed with `$`) that tell the Svelte compiler how to handle reactivity.
+
+#### Runes (Reactivity System)
+
+**`$state()`** declares reactive state. When this value changes, anything that depends on it automatically updates:
 
 ```svelte
-<div use:remoteChangeAnimation={{ entityId: item.id, entityType: 'goals' }}>
-  ...
-</div>
+<script>
+  let count = $state(0);
+  let name = $state('World');
+</script>
+
+<button onclick={() => count++}>
+  Clicked {count} times
+</button>
+
+<p>Hello, {name}!</p>
 ```
 
-Maps action types to CSS classes: `item-created`, `item-deleting`, `item-toggled`, `counter-increment`, `counter-decrement`, `item-reordering`, `text-changed`, `item-changed`. Handles checkbox animations, completion ripple effects, and counter animations. Supports pending delete animations (plays animation before DOM removal).
+When `count` changes (via the button click), Svelte automatically updates just the text node inside the button. No manual DOM manipulation, no virtual DOM diff -- the compiler generated code that knows exactly which DOM node to update.
 
-**`trackEditing`** -- attaches to form elements to protect user edits from remote overwrites:
+**`$derived()`** creates computed values that automatically recalculate when their dependencies change:
 
 ```svelte
-<form use:trackEditing={{ entityId: item.id, entityType: 'goals', formType: 'manual-save' }}>
-  ...
-</form>
+<script>
+  let width = $state(10);
+  let height = $state(20);
+  let area = $derived(width * height);  // auto-updates when width or height change
+</script>
+
+<p>Area: {area}</p>  <!-- Shows 200, updates automatically -->
 ```
 
-Auto-save forms apply remote changes immediately with animation. Manual-save forms defer changes until the form closes, then notify via callback.
+**`$effect()`** runs side effects when dependencies change (similar to React's `useEffect`):
 
-**`triggerLocalAnimation`** -- programmatically triggers the same animations for local actions:
+```svelte
+<script>
+  let searchQuery = $state('');
 
-```typescript
-import { triggerLocalAnimation } from '@prabhask5/stellar-engine';
-triggerLocalAnimation(element, 'toggle');
+  $effect(() => {
+    // This runs whenever searchQuery changes
+    console.log('Searching for:', searchQuery);
+    // Could fetch from an API, update localStorage, etc.
+  });
+</script>
 ```
 
-### Note on Framework Independence
+**`$props()`** declares the properties (inputs) a component accepts from its parent:
 
-The Svelte stores and actions are the only parts of the engine that import from `svelte/store`. All core modules (engine, queue, conflicts, realtime, auth, config, deviceId, debug, utils) are framework-agnostic TypeScript. If a consumer application does not use Svelte, the stores and actions are simply not imported and tree-shaken away.
+```svelte
+<script>
+  // This component accepts 'name' (required) and 'age' (optional, defaults to 0)
+  let { name, age = 0 } = $props();
+</script>
 
----
+<p>{name} is {age} years old</p>
+```
 
-## 5. TypeScript (Language)
+**`$bindable()`** creates props that support two-way binding (parent and child can both update the value):
 
-### Configuration
+```svelte
+<script>
+  let { value = $bindable('') } = $props();
+</script>
 
-**`tsconfig.json`** (`/Users/prabhask/Documents/Projects/stellar/stellar-engine/tsconfig.json`):
+<input bind:value={value} />
+```
 
-```json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "ES2020",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "outDir": "./dist",
-    "rootDir": "./src"
+#### Components
+
+A Svelte component is a `.svelte` file that contains three sections:
+
+```svelte
+<script>
+  // JavaScript/TypeScript logic
+  let count = $state(0);
+
+  function increment() {
+    count++;
   }
-}
+</script>
+
+<!-- HTML template (with Svelte syntax for reactivity) -->
+<button onclick={increment}>
+  Count: {count}
+</button>
+
+<style>
+  /* CSS -- automatically scoped to this component */
+  button {
+    background: blue;
+    color: white;
+  }
+</style>
 ```
 
-Key settings:
+The `<style>` block is automatically scoped -- the CSS only applies to elements in this component, not to the rest of the page. This eliminates CSS naming conflicts without needing CSS modules or styled-components.
 
-| Option | Purpose |
-|--------|---------|
-| `strict: true` | Enables all strict type-checking options (no implicit `any`, strict null checks, etc.). |
-| `declaration: true` | Generates `.d.ts` type declaration files alongside the JavaScript output, so consumer apps get full type information and IDE support. |
-| `declarationMap: true` | Generates `.d.ts.map` files that link declarations back to the original TypeScript source, enabling "Go to Definition" to navigate to the engine's source code. |
-| `target: ES2020` | Targets modern browsers with native async/await, optional chaining, and nullish coalescing. |
-| `moduleResolution: "bundler"` | Uses bundler-style resolution, matching how Vite and other modern tools resolve imports. |
+#### Snippets (Template Fragments)
 
-### Type Exports
+Snippets replaced Svelte 4's "slots" system. They are reusable template fragments that can be passed between components:
 
-The engine exports all public types from `src/index.ts` for consumer applications:
+```svelte
+<script>
+  import List from './List.svelte';
+</script>
 
-- `SyncEngineConfig`, `TableConfig` -- engine initialization configuration
-- `SyncOperationItem`, `OperationType` -- outbox operation types
-- `OfflineCredentials`, `OfflineSession` -- offline auth types
-- `SingleUserConfig`, `SingleUserGateType` -- single-user mode types
-- `ConflictHistoryEntry` -- conflict resolution records
-- `SyncStatus`, `AuthMode` -- status enums
-- `AppConfig` -- runtime configuration shape
-- `RealtimeConnectionState` -- WebSocket state
-- `SyncError`, `RealtimeState` -- store-related types
-- `RemoteActionType` -- detected action types for animations
-Consumer apps use these types to implement their repositories, configure the engine, and build type-safe UI integrations.
+<!-- Define a snippet that describes how to render each item -->
+{#snippet itemRenderer(item)}
+  <div class="card">
+    <h3>{item.name}</h3>
+    <p>{item.description}</p>
+  </div>
+{/snippet}
+
+<!-- Pass the snippet to a generic List component -->
+<List items={data} {itemRenderer} />
+```
+
+#### Store Contract
+
+Any JavaScript object with a `subscribe` method is a valid Svelte store. The `subscribe` method must accept a callback and return an unsubscribe function. In Svelte components, you can prefix a store variable with `$` to automatically subscribe and get the current value:
+
+```svelte
+<script>
+  import { syncStatusStore } from '@prabhask5/stellar-engine';
+
+  // $syncStatusStore automatically subscribes and unsubscribes
+  // It always contains the current value of the store
+</script>
+
+{#if $syncStatusStore.status === 'syncing'}
+  <p>Syncing...</p>
+{/if}
+```
+
+### How stellar-engine Integrates with Svelte
+
+- **All stores implement the Svelte store contract** (subscribe method). The engine exports reactive stores like `syncStatusStore`, `authState`, `isOnline`, and `remoteChangesStore` that work seamlessly with Svelte's `$store` syntax.
+- **`use:` actions for DOM-level behavior.** Svelte actions are functions that run when an element is mounted. The engine provides `remoteChangeAnimation` (animate elements when remote changes arrive) and `trackEditing` (protect user edits from being overwritten by incoming sync changes).
+- **Components** like `SyncStatus`, `DeferredChangesBanner`, and `DemoBanner` are provided as ready-to-use Svelte components.
+- **CSS custom properties for theming.** Components use CSS custom properties (variables like `--sync-color`) that consumer apps can override to match their design.
+- **Svelte is an OPTIONAL peer dependency.** The core engine (sync, queue, conflicts, realtime, auth, config) is framework-agnostic TypeScript. If a consumer app does not use Svelte, the stores and actions are simply not imported and are tree-shaken away by the bundler.
 
 ---
 
-## Demo Mode
+## 5. SvelteKit (Application Framework)
 
-### Implementation in Consumer Apps
+### What is SvelteKit?
 
-1. Create `src/lib/demo/mockData.ts` with a `seedData(db)` function
-2. Create `src/lib/demo/config.ts` exporting a `DemoConfig` object
-3. Pass `demo: demoConfig` to `initEngine()` in your root layout
-4. Add `<DemoBanner />` from `@prabhask5/stellar-engine/components/DemoBanner` to your root layout
-5. Create a `/demo` route with Start/Exit Demo buttons using `setDemoMode()`
+SvelteKit is a full-stack application framework built on top of Svelte, in the same way that Next.js is built on top of React. While Svelte handles individual UI components, SvelteKit handles everything else you need to build a complete web application:
 
-### Mock Data Seeding Patterns
+- Routing (which component shows for which URL)
+- Server-side rendering (generating HTML on the server for fast initial loads)
+- API endpoints (server-side code for handling requests)
+- Build optimization (code splitting, preloading, asset hashing)
+- Deployment (adapters for any hosting platform)
 
-```ts
-export async function seedDemoData(db: Dexie): Promise<void> {
-  // Use bulkPut for efficient batch insertion
-  await db.table('items').bulkPut([
-    { id: 'demo-1', name: 'Sample Item', order: 1, deleted: false, ... },
-    { id: 'demo-2', name: 'Another Item', order: 2, deleted: false, ... },
-  ]);
+Without SvelteKit, you would need to manually configure a router, a bundler, a dev server, server-side rendering, and deployment. SvelteKit handles all of this with sensible defaults and minimal configuration.
+
+### Key Concepts
+
+#### File-Based Routing
+
+Instead of configuring routes in a JavaScript file, SvelteKit uses the filesystem. The directory structure under `src/routes/` directly maps to URLs:
+
+```
+src/routes/
+  +page.svelte           --> /           (home page)
+  about/
+    +page.svelte         --> /about
+  blog/
+    +page.svelte         --> /blog       (blog listing)
+    [slug]/
+      +page.svelte       --> /blog/my-post  (dynamic route, slug = "my-post")
+  settings/
+    profile/
+      +page.svelte       --> /settings/profile
+```
+
+Each `+page.svelte` file is a page component that renders when the user navigates to that URL.
+
+#### Load Functions
+
+Load functions are special functions in `+page.ts` or `+layout.ts` files that run **before** the page renders. They fetch data and pass it to the component as props:
+
+```typescript
+// src/routes/blog/[slug]/+page.ts
+export async function load({ params }) {
+  // params.slug comes from the URL (e.g., "my-post")
+  const post = await fetchBlogPost(params.slug);
+  return { post };  // This becomes available as data.post in the component
 }
 ```
 
-### Generated Files
-The `stellar-engine install pwa` scaffolding generates:
-- `src/lib/demo/config.ts` — DemoConfig with mock profile
-- `src/lib/demo/mockData.ts` — Stub seedData function
-- `src/routes/demo/+page.svelte` — Demo landing page
+```svelte
+<!-- src/routes/blog/[slug]/+page.svelte -->
+<script>
+  let { data } = $props();
+</script>
+
+<h1>{data.post.title}</h1>
+<p>{data.post.content}</p>
+```
+
+Load functions can run on the server (in `+page.server.ts`) or on the client (in `+page.ts`). Server-only load functions can access databases, secrets, and other server-side resources.
+
+#### Layouts
+
+Layouts are shared wrappers that persist across page navigation. A `+layout.svelte` file wraps all pages in its directory (and subdirectories):
+
+```svelte
+<!-- src/routes/+layout.svelte (root layout, wraps ALL pages) -->
+<script>
+  let { children } = $props();
+</script>
+
+<nav>
+  <a href="/">Home</a>
+  <a href="/about">About</a>
+</nav>
+
+<main>
+  {@render children()}  <!-- Page content renders here -->
+</main>
+
+<footer>Copyright 2024</footer>
+```
+
+When the user navigates between pages, the layout stays mounted (the nav and footer do not re-render), and only the page content changes. This provides instant-feeling navigation.
+
+Layouts can also have their own load functions (`+layout.ts`) that load data shared by all child pages, like user authentication state.
+
+#### Server Routes (API Endpoints)
+
+`+server.ts` files create API endpoints that handle HTTP requests:
+
+```typescript
+// src/routes/api/config/+server.ts
+import { json } from '@sveltejs/kit';
+
+export async function GET() {
+  const config = await loadConfig();
+  return json(config);
+}
+
+export async function POST({ request }) {
+  const body = await request.json();
+  await saveConfig(body);
+  return json({ success: true });
+}
+```
+
+This creates `GET /api/config` and `POST /api/config` endpoints that can be called from the frontend or external clients.
+
+#### Route Groups
+
+Directories wrapped in parentheses create "groups" that share a layout without affecting the URL:
+
+```
+src/routes/
+  (app)/                   <-- Group: shares a layout, but "(app)" is NOT in the URL
+    +layout.svelte         <-- Layout with navigation, auth guards
+    dashboard/
+      +page.svelte         --> /dashboard  (not /app/dashboard)
+    settings/
+      +page.svelte         --> /settings
+  (auth)/                  <-- Different group with a different layout
+    +layout.svelte         <-- Layout with centered card, no navigation
+    login/
+      +page.svelte         --> /login
+    signup/
+      +page.svelte         --> /signup
+```
+
+This lets you have completely different layouts for different sections of your app (e.g., authenticated pages with navigation vs. login pages with a centered form) without adding prefixes to URLs.
+
+#### Error Pages
+
+`+error.svelte` files handle errors at each level of the route hierarchy:
+
+```svelte
+<!-- src/routes/+error.svelte -->
+<script>
+  import { page } from '$app/stores';
+</script>
+
+<h1>{$page.status} - {$page.error?.message}</h1>
+```
+
+#### Hooks
+
+Server hooks (`src/hooks.server.ts`) act like middleware, running on every request before it reaches a route:
+
+```typescript
+// src/hooks.server.ts
+export async function handle({ event, resolve }) {
+  // Run before every request (check auth, log, modify headers, etc.)
+  const session = await getSession(event.cookies);
+  event.locals.user = session?.user;
+  return resolve(event);
+}
+```
+
+#### Adapters
+
+SvelteKit adapters configure how your app is deployed. Different adapters target different platforms:
+
+- `adapter-vercel` -- deploy to Vercel
+- `adapter-netlify` -- deploy to Netlify
+- `adapter-node` -- deploy as a Node.js server
+- `adapter-static` -- generate a fully static site (no server needed)
+
+You configure the adapter in `svelte.config.js` and SvelteKit handles the rest.
+
+### How stellar-engine Integrates with SvelteKit (OPTIONAL)
+
+SvelteKit integration is provided through the `@prabhask5/stellar-engine/kit` subpath export. It is entirely optional -- the core engine works without SvelteKit.
+
+- **Layout load functions**: `resolveRootLayout()` and `resolveProtectedLayout()` are factory functions that generate SvelteKit load functions for common patterns. `resolveRootLayout()` initializes the engine, loads config, and determines auth state. `resolveProtectedLayout()` guards routes that require authentication, redirecting unauthenticated users.
+- **Server API handlers**: `getServerConfig()` creates a `GET` handler for `/api/config` that serves runtime configuration. `createValidateHandler()` creates a `POST` handler for validating Supabase connection credentials. `deployToVercel()` provides deployment utilities.
+- **Email confirmation page helpers**: `handleEmailConfirmation()` processes the token exchange when a user clicks an email confirmation link.
+- **Auth hydration**: `hydrateAuthState()` bridges SvelteKit load data (available on first render) to reactive stores (used throughout the app lifecycle).
+- **Service worker lifecycle**: `pollForNewServiceWorker()` and `monitorSwLifecycle()` manage PWA service worker updates, prompting users when a new version is available.
+- **Project scaffolding**: `stellar-engine install pwa` generates a complete SvelteKit project structure with routes, layouts, service worker, and configuration files.
+
+---
+
+## 6. Yjs (CRDT Library)
+
+### What is Yjs?
+
+Yjs is a high-performance implementation of CRDTs (Conflict-free Replicated Data Types) in JavaScript. It enables real-time collaborative editing -- the kind of experience you see in Google Docs, where multiple users can edit the same document simultaneously and all changes merge together automatically.
+
+### What are CRDTs?
+
+CRDT stands for **Conflict-free Replicated Data Type**. To understand why they matter, consider the problem they solve:
+
+Imagine two users, Alice and Bob, are editing the same document. Alice types "Hello" at the beginning, and at the same time (before either sees the other's change), Bob types "World" at the end. With a naive approach, you have a conflict -- whose version wins? Do you overwrite one person's work? Show a conflict dialog?
+
+CRDTs are data structures mathematically designed so that **any two copies can always be merged automatically, without conflicts, regardless of the order operations arrive**. Alice's "Hello" and Bob's "World" both appear in the final document, in the correct positions, on every device, even if the operations arrive in different orders on different devices.
+
+This "always mergeable" property holds even when:
+- Users are offline and make many edits before reconnecting
+- Network messages arrive out of order
+- Devices connect and disconnect unpredictably
+
+### Why CRDTs Matter
+
+Without CRDTs, collaborative editing requires a central server that serializes all operations (like Operational Transformation, used by the original Google Docs). This approach:
+- Requires a persistent server connection
+- Does not work offline
+- Has complex edge cases around operation ordering
+
+CRDTs eliminate these problems. Each client has a complete local copy, can edit freely offline, and merges are always automatic and correct.
+
+### Key Shared Types in Yjs
+
+Yjs provides several collaborative data types that mirror common JavaScript data structures:
+
+**`Y.Text`** is collaborative text. Multiple users can type, delete, and format text simultaneously. It supports rich-text attributes (bold, italic, etc.) and is commonly used with text editors like Tiptap, ProseMirror, or CodeMirror:
+
+```javascript
+const ytext = ydoc.getText('document-title');
+ytext.insert(0, 'Hello ');       // Insert "Hello " at position 0
+ytext.insert(6, 'World');        // Insert "World" at position 6
+ytext.toString();                // "Hello World"
+
+// Rich text formatting
+ytext.format(0, 5, { bold: true });  // Make "Hello" bold
+```
+
+**`Y.Array`** is a collaborative ordered list. Items can be inserted, deleted, and moved by multiple users:
+
+```javascript
+const yarray = ydoc.getArray('todo-list');
+yarray.insert(0, ['Buy groceries']);
+yarray.insert(1, ['Walk the dog']);
+yarray.push(['Read a book']);
+yarray.toArray();  // ['Buy groceries', 'Walk the dog', 'Read a book']
+```
+
+**`Y.Map`** is a collaborative key-value store, like a JavaScript object that multiple users can edit:
+
+```javascript
+const ymap = ydoc.getMap('settings');
+ymap.set('theme', 'dark');
+ymap.set('fontSize', 14);
+ymap.get('theme');  // 'dark'
+```
+
+**`Y.XmlFragment`** is a collaborative XML tree structure. It is primarily used by block editors like Tiptap (which represents documents as XML-like trees of nodes):
+
+```javascript
+const yfragment = ydoc.getXmlFragment('editor-content');
+// Typically manipulated by editor bindings, not directly
+```
+
+### How Sync Works in Yjs
+
+Each Yjs document (`Y.Doc`) tracks all changes as operations. Every operation is uniquely identified by a `(clientId, clock)` tuple:
+
+- **clientId**: a random number assigned to each peer (browser tab, device)
+- **clock**: a counter that increments with each operation on that client
+
+This means every character typed, every deletion, every formatting change has a globally unique identifier.
+
+**State vectors** track what each peer has seen. A state vector is essentially a map of `{ clientId: lastSeenClock }`. When two peers connect, they exchange state vectors, and each peer can compute exactly which operations the other is missing.
+
+**Delta sync** means only missing operations are sent. If Alice has made 1000 edits and Bob has seen 990 of them, only the 10 missing edits are transmitted. This makes sync extremely efficient, even for large documents.
+
+**Merging** is automatic and deterministic. Given the same set of operations (in any order), every peer produces the exact same final document. There are no conflicts, no merge dialogs, no "your version vs. their version."
+
+### How stellar-engine Uses Yjs
+
+The engine's CRDT subsystem is optional and used for rich collaborative content (like text documents or structured editors):
+
+- **Documents are `Y.Doc` instances.** Each collaborative document in the application is backed by a Yjs document that holds the shared state.
+- **Updates broadcast via Supabase Realtime Broadcast** (not database writes per keystroke). When a user types a character, the Yjs update (typically a few bytes) is broadcast to other connected clients via Supabase's pub/sub channel. This is much more efficient than writing every keystroke to the database.
+- **State persisted to IndexedDB** for offline support and crash recovery. The full Yjs document state is periodically saved to the local database, so if the user closes the tab or loses connection, no work is lost.
+- **Periodic full-state persistence to Supabase** (every 30 seconds). The complete document state is saved to the server database at regular intervals. This serves as a backup and allows new devices to load the latest state without replaying all historical operations.
+- **Consumers never need to import Yjs directly.** All Yjs types and utilities needed by consumer applications are re-exported from the engine package, keeping the dependency tree clean.
