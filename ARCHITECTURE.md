@@ -19,7 +19,8 @@
 16. [Diagnostics](#16-diagnostics)
 17. [SvelteKit Integration](#17-sveltekit-integration)
 18. [CLI Tool](#18-cli-tool)
-19. [File Map](#19-file-map)
+19. [Vite Plugin Schema Processing](#19-vite-plugin-schema-processing)
+20. [File Map](#20-file-map)
 
 ---
 
@@ -1967,9 +1968,110 @@ The scaffolder uses `writeIfMissing()` -- files are only created if they don't a
 - Developers can modify generated files without fear of overwriting
 - The summary output shows which files were created vs skipped
 
+### 18.5 Schema Workflow Integration
+
+The scaffolded project is fully wired for the schema auto-generation workflow:
+
+- `vite.config.ts` includes `stellarPWA({ ..., schema: true })`
+- `src/lib/schema.ts` is the single source of truth, imported by both the Vite plugin and the app's `+layout.ts`
+- `.env.example` documents all three Supabase env vars (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`)
+- `.gitignore` excludes `.stellar/` and `src/lib/types.generated.ts`
+- `src/lib/types.ts` imports from `types.generated.ts` with guidance on `Omit` + extend narrowing
+
 ---
 
-## 19. File Map
+## 19. Vite Plugin Schema Processing
+
+**File**: `src/sw/build/vite-plugin.ts`
+
+The `stellarPWA` Vite plugin handles service worker builds, asset manifest generation, and (when `schema` is enabled) automatic TypeScript type generation and Supabase migration pushing.
+
+### 19.1 Schema Processing Flow
+
+```
+Schema file changes (src/lib/schema.ts)
+  |
+  v
+[Load schema] ── dev: ssrLoadModule()
+  |               build: esbuild → dynamic import
+  v
+[Generate TypeScript] ── generateTypeScript(schema) → src/lib/types.generated.ts
+  |
+  v
+[Load snapshot] ── .stellar/schema-snapshot.json
+  |
+  +── No snapshot (first run):
+  |     generateSupabaseSQL(schema) → full CREATE TABLE DDL
+  |
+  +── Snapshot exists:
+        diff JSON.stringify(old) vs JSON.stringify(new)
+        if different: generateMigrationSQL(old, new) → ALTER TABLE deltas
+  |
+  v
+[Push migration SQL] ── supabase.rpc('stellar_engine_migrate', { sql_text })
+  |                      requires SUPABASE_SERVICE_ROLE_KEY
+  v
+[Save snapshot] ── .stellar/schema-snapshot.json (updated)
+```
+
+### 19.2 Dev vs Build Behavior
+
+**Development** (`npm run dev`):
+- `configureServer` hook loads the schema via Vite's `ssrLoadModule()` (live transpilation)
+- Schema file is watched; changes trigger reprocessing with a **500ms debounce**
+- Full cycle (types + diff + migrate) runs on every save
+
+**Production** (`npm run build`):
+- `buildStart` hook uses **esbuild** to transpile the schema file into a temp `.mjs` file, then dynamically imports it
+- Schema is processed **once** during build (ensures CI/CD still migrates)
+- Temp file is cleaned up after import
+
+### 19.3 Environment Variables
+
+| Variable | Required For | Description |
+|---|---|---|
+| `PUBLIC_SUPABASE_URL` | Migration push | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Migration push | Service role key with RLS bypass for DDL execution |
+
+If either is missing, TypeScript types are still generated but migration push is **skipped** with a console warning. This allows local development without Supabase credentials.
+
+### 19.4 The `stellar_engine_migrate` RPC Function
+
+Auto-generated in the initial SQL output, this PostgreSQL function accepts arbitrary SQL and executes it dynamically. Access is restricted to the `service_role` JWT:
+
+```sql
+create or replace function stellar_engine_migrate(sql_text text)
+returns void as $$
+begin
+  if current_setting('request.jwt.claims', true)::json->>'role' != 'service_role' then
+    raise exception 'Unauthorized: stellar_engine_migrate requires service_role';
+  end if;
+  execute sql_text;
+end;
+$$ language plpgsql security definer;
+```
+
+The Vite plugin creates a temporary Supabase client using the service role key and calls this RPC to apply schema changes. This provides a secure, auditable channel for automated DDL without exposing the database connection string.
+
+### 19.5 Migration Safety
+
+- **Additive operations** (new tables, new columns) are applied automatically.
+- **Destructive operations** (DROP TABLE, DROP COLUMN) are generated as **comments**, requiring manual review and execution.
+- **Type changes** (e.g., `text` → `integer`) are not detected and require manual migration.
+- **Renames** (via `renamedFrom` and `renamedColumns`) produce proper `ALTER TABLE ... RENAME` statements.
+
+### 19.6 Generated Files
+
+| File | Purpose | Git-tracked? |
+|---|---|---|
+| `src/lib/types.generated.ts` | TypeScript interfaces from schema `fields` | No |
+| `.stellar/schema-snapshot.json` | Previous schema state for migration diffing | No |
+| `static/sw.js` | Service worker with cache prefix and version | Yes |
+| `static/asset-manifest.json` | Asset list for service worker precaching | Yes |
+
+---
+
+## 20. File Map
 
 | Layer | File | Purpose |
 |-------|------|---------|

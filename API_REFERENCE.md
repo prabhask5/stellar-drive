@@ -14,6 +14,7 @@ Complete reference for all public exports from `stellar-drive`.
 | `stellar-drive/utils` | Utility functions + debug + diagnostics + SQL generation |
 | `stellar-drive/actions` | Svelte `use:` actions |
 | `stellar-drive/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`) |
+| `stellar-drive/vite` | Vite plugin (`stellarPWA`) for service worker builds, schema auto-generation, and asset manifests |
 | `stellar-drive/kit` | SvelteKit route helpers, server APIs, load functions, email confirmation, auth hydration |
 | `stellar-drive/crdt` | CRDT collaborative editing (document lifecycle, shared types, presence, offline) |
 
@@ -50,6 +51,7 @@ All exports are also available from the root `stellar-drive` barrel export.
 - [Demo Mode](#demo-mode)
 - [CRDT Collaborative Editing](#crdt-collaborative-editing)
 - [Types](#types)
+- [Vite Plugin](#vite-plugin-stellarpwa)
 - [CLI Commands](#cli-commands)
 - [Re-exports](#re-exports)
 
@@ -1604,19 +1606,187 @@ interface UserPresenceState {
 
 ---
 
+## Vite Plugin (`stellarPWA`)
+
+The `stellarPWA` Vite plugin provides service worker build, asset manifest generation, and **schema-driven auto-generation** of TypeScript types and Supabase migrations. Import from `stellar-drive/vite`.
+
+```ts
+import { stellarPWA } from 'stellar-drive/vite';
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [
+    sveltekit(),
+    stellarPWA({
+      prefix: 'myapp',
+      name: 'My App',
+      schema: true,
+    }),
+  ],
+});
+```
+
+### `stellarPWA(options)`
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `prefix` | `string` | Yes | -- | Cache prefix for service worker and asset naming. |
+| `name` | `string` | Yes | -- | App name used in SQL comments and build logging. |
+| `schema` | `boolean \| SchemaPluginOptions` | No | `false` | Enable schema auto-generation. Pass `true` for defaults or an options object. |
+
+### `SchemaPluginOptions`
+
+When `schema` is an object instead of `true`, these options are available:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `path` | `string` | `'src/lib/schema.ts'` | Path to the schema source file (must export `schema`). |
+| `typesOutput` | `string` | `'src/lib/types.generated.ts'` | Path where generated TypeScript interfaces are written. |
+| `autoMigrate` | `boolean` | `true` | Whether to push migration SQL to Supabase automatically. |
+
+### Schema Auto-Generation Workflow
+
+When `schema` is enabled, the plugin drives three systems from a single `schema.ts` file:
+
+1. **TypeScript interfaces** -- auto-generated at `src/lib/types.generated.ts`
+2. **Supabase DDL** -- auto-migrated via the `stellar_engine_migrate` RPC function
+3. **IndexedDB/Dexie** -- auto-versioned at runtime by the engine's `initEngine()` call
+
+#### Development Mode (`npm run dev`)
+
+- On server start, the plugin loads the schema via Vite's `ssrLoadModule()` and processes it once.
+- The schema file is **watched** for changes. On save, a **500ms debounce** triggers reprocessing.
+- Each processing cycle: generates types, diffs against the snapshot, generates migration SQL, and pushes to Supabase.
+
+#### Production Build (`npm run build`)
+
+- The plugin uses **esbuild** to transpile the schema file (no Vite dev server available).
+- Schema is processed **once** during the `buildStart` hook, ensuring CI/CD pipelines that skip dev mode still generate types and push migrations.
+
+#### Schema Snapshot (`.stellar/schema-snapshot.json`)
+
+The plugin maintains a JSON snapshot of the last-known schema state at `.stellar/schema-snapshot.json`. This file is used for **incremental migration diffing**:
+
+- **First run (no snapshot):** Generates full initial SQL via `generateSupabaseSQL()` (CREATE TABLE, RLS policies, triggers, indexes, extensions, helper functions). Pushes to Supabase and saves the snapshot.
+- **Subsequent runs:** Loads the snapshot, compares against the current schema. If different, calls `generateMigrationSQL()` to produce only the delta (ALTER TABLE statements). Pushes to Supabase and updates the snapshot.
+
+The `.stellar/` directory should be added to `.gitignore` (the `install pwa` command does this automatically).
+
+#### Migration Push (`pushMigration`)
+
+Migrations are pushed to Supabase via an RPC function:
+
+```sql
+-- Auto-generated in the initial SQL
+create or replace function stellar_engine_migrate(sql_text text)
+returns void as $$
+begin
+  if current_setting('request.jwt.claims', true)::json->>'role' != 'service_role' then
+    raise exception 'Unauthorized: stellar_engine_migrate requires service_role';
+  end if;
+  execute sql_text;
+end;
+$$ language plpgsql security definer;
+```
+
+The plugin creates a temporary Supabase client with the **service role key** and calls `supabase.rpc('stellar_engine_migrate', { sql_text: sql })`. This function only accepts calls with the `service_role` JWT, preventing unauthorized schema modifications.
+
+#### Migration Safety
+
+- **Destructive operations are commented out.** `generateMigrationSQL()` produces `-- drop table` and `-- alter table drop column` as comments, requiring manual review.
+- **Type changes are not handled.** Changing a column's type (e.g., `string` to `number`) requires manual migration.
+- **Additive operations are safe.** New tables and new columns are applied automatically.
+
+#### Fallback When Environment Variables Are Missing
+
+If `PUBLIC_SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` are not set:
+
+- **TypeScript types are still generated** -- the plugin does not require Supabase credentials for type generation.
+- **Migration push is skipped** with a warning:
+  ```
+  [stellar-drive] ⚠ Supabase auto-migration skipped — missing env vars
+  ```
+
+This means local development works without Supabase credentials; only the auto-migration feature requires them.
+
+### Environment Variables
+
+The Vite plugin and SvelteKit server helpers read these environment variables:
+
+| Variable | Required For | Description |
+|---|---|---|
+| `PUBLIC_SUPABASE_URL` | Runtime + migrations | Your Supabase project URL (e.g., `https://abc.supabase.co`). Find it: Supabase Dashboard > Settings > API > Project URL. |
+| `PUBLIC_SUPABASE_ANON_KEY` | Runtime | The anonymous/public API key for client-side auth and data access. Find it: Supabase Dashboard > Settings > API > Project API keys > anon public. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Auto-migration only | The service role key with full RLS bypass. Used by the Vite plugin to push schema migrations via the `stellar_engine_migrate` RPC. If not set, migrations are skipped. Find it: Supabase Dashboard > Settings > API > Project API keys > service_role. **Never expose this key to the client.** |
+
+### Generated Files
+
+| File | Purpose | Git-tracked? |
+|---|---|---|
+| `src/lib/types.generated.ts` | TypeScript interfaces from schema | No (add to `.gitignore`) |
+| `.stellar/schema-snapshot.json` | Schema state for migration diffing | No (add to `.gitignore`) |
+| `static/sw.js` | Service worker with cache config | Yes |
+| `static/asset-manifest.json` | Asset list for SW precaching | Yes |
+
+---
+
 ## CLI Commands
 
 The package provides a CLI via `npx stellar-drive <command>`.
 
 ### `install pwa`
 
-Scaffold a complete offline-first SvelteKit PWA project. Adds service worker config, manifest, install prompts, and all required boilerplate.
+Scaffold a complete offline-first SvelteKit PWA project with an interactive walkthrough. Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project.
 
 ```bash
 npx stellar-drive install pwa
 ```
 
-This is the only CLI command. There is no `setup` command.
+#### Wizard Prompts
+
+| Prompt | Required | Description |
+|---|---|---|
+| App Name | Yes | Full app name (e.g., "My Planner") |
+| Short Name | Yes | Short name for PWA home screen (under 12 chars) |
+| Prefix | Yes | Lowercase key for localStorage, caches, SW (auto-suggested from name) |
+| Description | No | App description (default: "A self-hosted offline-first PWA") |
+
+#### Generated Files
+
+| Category | Count | Files |
+|---|---|---|
+| Config | 8 | `vite.config.ts`, `tsconfig.json`, `svelte.config.js`, `eslint.config.js`, `.prettierrc`, `.prettierignore`, `knip.json`, `.gitignore` |
+| Documentation | 3 | `README.md`, `ARCHITECTURE.md`, `FRAMEWORKS.md` |
+| Environment | 1 | `.env.example` with all Supabase env vars and setup instructions |
+| Static assets | 13 | `manifest.json`, `offline.html`, placeholder SVG icons, email templates |
+| Database | 1 | `supabase-schema.sql` with helper functions, example tables, `trusted_devices` |
+| Schema | 1 | `src/lib/schema.ts` -- single source of truth for all tables |
+| Types | 1 | `src/lib/types.ts` -- type re-exports and app-specific narrowing stubs |
+| App entry | 2 | `src/app.html`, `src/app.d.ts` |
+| Routes | 16 | Root layout, login, setup, profile, protected area, API endpoints, catch-all redirect |
+| Git hooks | 1 | `.husky/pre-commit` with lint + format + validate |
+
+#### Post-Scaffold Setup
+
+After running `install pwa`:
+
+1. Copy `.env.example` to `.env` and fill in your Supabase credentials.
+2. Run `npm install` to install dependencies.
+3. Run `npm run dev` -- the Vite plugin will:
+   - Generate TypeScript types at `src/lib/types.generated.ts`
+   - Generate initial Supabase SQL and push it via `stellar_engine_migrate` (if `SUPABASE_SERVICE_ROLE_KEY` is set)
+   - Create `.stellar/schema-snapshot.json` for future migration diffing
+4. If `SUPABASE_SERVICE_ROLE_KEY` is not set, manually run the generated `supabase-schema.sql` in the Supabase SQL Editor.
+
+#### Schema Workflow Integration
+
+The scaffolded project is fully integrated with the schema auto-generation workflow:
+
+- `vite.config.ts` includes `stellarPWA({ ..., schema: true })`.
+- `src/lib/schema.ts` is the single source of truth, imported by both the Vite plugin (for type/SQL generation) and the app's `+layout.ts` (for `initEngine()`).
+- `.gitignore` excludes `.stellar/` and `src/lib/types.generated.ts`.
+- `src/lib/types.ts` imports from `types.generated.ts` and provides a place for app-specific type narrowing (e.g., `Omit<Generated, 'field'> & { field: NarrowType }`).
 
 ---
 

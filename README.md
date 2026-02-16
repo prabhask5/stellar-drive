@@ -311,6 +311,53 @@ const diagnostics = await getDiagnostics();
 // window.__myappSync.forceFullSync()
 ```
 
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `PUBLIC_SUPABASE_URL` | Yes | Supabase project URL. Find it: Dashboard > Settings > API > Project URL. |
+| `PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key. Find it: Dashboard > Settings > API > Project API keys > anon public. |
+| `SUPABASE_SERVICE_ROLE_KEY` | For auto-migration | Service role key (full RLS bypass). Used by the Vite plugin to push schema migrations. If not set, migrations are skipped and types are still generated. Find it: Dashboard > Settings > API > Project API keys > service_role. |
+
+## Schema workflow
+
+The schema-driven workflow lets you declare your database schema once in `src/lib/schema.ts` and have three systems stay in sync automatically:
+
+1. **TypeScript interfaces** -- auto-generated at `src/lib/types.generated.ts`
+2. **Supabase DDL** -- auto-migrated via the `stellar_engine_migrate` RPC function
+3. **IndexedDB/Dexie** -- auto-versioned at runtime by `initEngine()`
+
+### How it works
+
+Enable schema auto-generation by passing `schema: true` to the `stellarPWA` Vite plugin:
+
+```ts
+// vite.config.ts
+import { stellarPWA } from 'stellar-drive/vite';
+
+export default defineConfig({
+  plugins: [
+    sveltekit(),
+    stellarPWA({ prefix: 'myapp', name: 'My App', schema: true }),
+  ],
+});
+```
+
+In **dev mode**, the plugin watches `src/lib/schema.ts` and reprocesses on save (500ms debounce). In **build mode**, schema is processed once during `buildStart`.
+
+Each processing cycle:
+1. Generates TypeScript interfaces from schema field definitions
+2. Loads the previous schema snapshot from `.stellar/schema-snapshot.json`
+3. Diffs old vs new schema to produce `ALTER TABLE` migration SQL
+4. Pushes migration SQL to Supabase via `stellar_engine_migrate` RPC (requires `SUPABASE_SERVICE_ROLE_KEY`)
+5. Saves the updated snapshot
+
+On first run (no snapshot), the plugin generates full `CREATE TABLE` SQL with RLS policies, triggers, and indexes.
+
+If `SUPABASE_SERVICE_ROLE_KEY` is not set, types are still generated but migration push is skipped with a warning.
+
+See [API Reference -- Vite Plugin](./API_REFERENCE.md#vite-plugin-stellarpwa) for full configuration options.
+
 ## Commands
 
 ### Install PWA
