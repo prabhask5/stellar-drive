@@ -430,17 +430,24 @@ export function getTableColumns(supabaseName: string): string {
  * @returns A comma-separated column string, or `null` if no fields are declared.
  * @internal
  */
+/**
+ * Whether this table has its own `user_id` column (direct ownership).
+ * Child tables with `ownership: { parent, fk }` do NOT have `user_id`.
+ */
+function hasDirectOwnership(config: SchemaTableConfig): boolean {
+  return typeof config.ownership !== 'object';
+}
+
 function buildColumnsFromFields(config: SchemaTableConfig): string | null {
   if (!config.fields || Object.keys(config.fields).length === 0) return null;
-  const systemCols = [
-    'id',
-    'user_id',
-    'created_at',
-    'updated_at',
-    'deleted',
-    '_version',
-    'device_id'
-  ];
+  const systemCols = ['id', 'created_at', 'updated_at', 'deleted', '_version', 'device_id'];
+  /* Include user_id only for tables that have direct user ownership.
+     Child tables (ownership: { parent, fk }) inherit ownership through
+     RLS policies on the parent table's FK and don't have a user_id column. */
+  if (hasDirectOwnership(config)) {
+    const ownershipCol = config.ownership || 'user_id';
+    systemCols.splice(1, 0, ownershipCol as string);
+  }
   const appCols = Object.keys(config.fields);
   return [...systemCols, ...appCols].join(',');
 }
@@ -456,7 +463,9 @@ function generateTablesFromSchema(schema: SchemaDefinition): TableConfig[] {
     const tableConfig: TableConfig = {
       supabaseName: tableName,
       columns: config.columns || buildColumnsFromFields(config) || '*',
-      ownershipFilter: config.ownership || 'user_id'
+      ownershipFilter: hasDirectOwnership(config)
+        ? (config.ownership as string) || 'user_id'
+        : undefined
     };
 
     if (config.singleton) tableConfig.isSingleton = true;

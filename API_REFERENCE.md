@@ -185,7 +185,7 @@ Per-table sync configuration. Each entry describes one Supabase table and how it
 interface TableConfig {
   supabaseName: string;                        // Supabase table name (snake_case)
   columns: string;                             // Supabase SELECT columns (egress optimization)
-  ownershipFilter?: string;                    // Column for RLS ownership filtering
+  ownershipFilter?: string;                    // Column for RLS ownership filtering (undefined for child tables)
   isSingleton?: boolean;                       // One record per user (e.g., user settings)
   excludeFromConflict?: string[];              // Fields to skip during conflict resolution
   numericMergeFields?: string[];               // Fields that use additive merge for conflicts
@@ -205,8 +205,13 @@ Each key is a Supabase table name (snake_case). Values are either a string of ap
 
 ```ts
 const schema: SchemaDefinition = {
-  goals: 'goal_list_id, order',           // string shorthand
-  focus_settings: { singleton: true },     // object form
+  goal_lists: 'project_id, order',                              // string shorthand (has user_id)
+  goals: {                                                      // child table (no user_id)
+    indexes: 'goal_list_id, order',
+    ownership: { parent: 'goal_lists', fk: 'goal_list_id' },
+    fields: { goal_list_id: 'uuid', name: 'string', order: 'number' }
+  },
+  focus_settings: { singleton: true },                          // singleton (one per user)
   projects: 'is_current, order',
 };
 ```
@@ -219,7 +224,7 @@ Per-table configuration when using the object form of `SchemaDefinition`.
 |---|---|---|---|
 | `indexes` | `string` | `''` | App-specific Dexie indexes (system indexes auto-appended). |
 | `singleton` | `boolean` | `false` | Single row per user (e.g., user settings). |
-| `ownership` | `string` | `'user_id'` | Override the default ownership column. |
+| `ownership` | `string \| { parent, fk }` | `'user_id'` | Row ownership for RLS. String overrides the ownership column name. Object form `{ parent: 'parent_table', fk: 'fk_column' }` marks a child table — no `user_id` column is added, and RLS policies filter via the parent FK. |
 | `columns` | `string` | `'*'` | Explicit Supabase SELECT columns. |
 | `dexieName` | `string` | auto | Override auto-generated camelCase Dexie table name. |
 | `excludeFromConflict` | `string[]` | -- | Fields to skip during conflict resolution. |
@@ -1185,7 +1190,7 @@ Generate complete Supabase SQL or TypeScript interfaces from a `SchemaDefinition
 
 ### `generateSupabaseSQL(schema, options?)`
 
-Produces complete SQL: CREATE TABLE, RLS policies, triggers, indexes, and realtime subscriptions.
+Produces complete SQL: CREATE TABLE, RLS policies, triggers, indexes, and realtime subscriptions. Tables with `ownership: { parent, fk }` generate parent-FK RLS policies (per-operation `exists` checks) instead of direct `user_id` ownership, and skip the `user_id` column, `set_user_id` trigger, and `user_id` index.
 
 ```ts
 function generateSupabaseSQL(

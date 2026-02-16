@@ -325,7 +325,11 @@ export function generateTypeScript(schema, options) {
             }
             fieldEntries.push({ name: fieldName, type: tsType, optional: false });
         }
-        interfaces.push({ name: interfaceName, fields: fieldEntries });
+        interfaces.push({
+            name: interfaceName,
+            fields: fieldEntries,
+            hasUserOwnership: typeof config.ownership !== 'object'
+        });
     }
     /* Emit enum type aliases. */
     if (enums.length > 0) {
@@ -341,6 +345,9 @@ export function generateTypeScript(schema, options) {
         /* System columns first. */
         if (includeSystem) {
             lines.push('  id: string;');
+            if (iface.hasUserOwnership) {
+                lines.push('  user_id: string;');
+            }
         }
         /* Business fields. */
         for (const f of iface.fields) {
@@ -395,8 +402,13 @@ function generateTableSQL(tableName, config, options) {
     lines.push(`-- ${tableLabel}`);
     /* ---- CREATE TABLE ---- */
     const columnDefs = [];
-    /* System columns first (always present on every sync table). */
+    /* System columns first (always present on every sync table).
+       Child tables (ownership: { parent, fk }) skip user_id — they inherit
+       ownership through RLS policies on the parent table's FK. */
+    const isChildTable = typeof config.ownership === 'object';
     for (const [colName, colDef] of SYSTEM_COLUMNS) {
+        if (colName === 'user_id' && isChildTable)
+            continue;
         columnDefs.push(`  ${colName} ${colDef}`);
     }
     /* Track which fields have been emitted (to avoid duplicates). */
@@ -454,14 +466,29 @@ function generateTableSQL(tableName, config, options) {
     lines.push('');
     /* ---- ROW LEVEL SECURITY ---- */
     lines.push(`alter table ${tableName} enable row level security;`);
-    lines.push(`create policy "Users can manage own ${tableName}" on ${tableName} for all using (auth.uid() = user_id);`);
+    if (isChildTable) {
+        /* Child table — RLS via parent FK existence check. */
+        const { parent, fk } = config.ownership;
+        const check = `exists (select 1 from ${parent} where id = ${tableName}.${fk} and user_id = auth.uid())`;
+        lines.push(`create policy "Owner can view ${tableName}" on ${tableName} for select using (${check});`);
+        lines.push(`create policy "Owner can create ${tableName}" on ${tableName} for insert with check (${check});`);
+        lines.push(`create policy "Owner can update ${tableName}" on ${tableName} for update using (${check});`);
+        lines.push(`create policy "Owner can delete ${tableName}" on ${tableName} for delete using (${check});`);
+    }
+    else {
+        lines.push(`create policy "Users can manage own ${tableName}" on ${tableName} for all using (auth.uid() = user_id);`);
+    }
     lines.push('');
     /* ---- TRIGGERS ---- */
-    lines.push(`create trigger set_user_id_${tableName} before insert on ${tableName} for each row execute function set_user_id();`);
+    if (!isChildTable) {
+        lines.push(`create trigger set_user_id_${tableName} before insert on ${tableName} for each row execute function set_user_id();`);
+    }
     lines.push(`create trigger update_${tableName}_updated_at before update on ${tableName} for each row execute function update_updated_at_column();`);
     lines.push('');
     /* ---- INDEXES ---- */
-    lines.push(`create index idx_${tableName}_user_id on ${tableName}(user_id);`);
+    if (!isChildTable) {
+        lines.push(`create index idx_${tableName}_user_id on ${tableName}(user_id);`);
+    }
     lines.push(`create index idx_${tableName}_updated_at on ${tableName}(updated_at);`);
     lines.push(`create index idx_${tableName}_deleted on ${tableName}(deleted) where deleted = false;`);
     lines.push('');
@@ -706,15 +733,27 @@ export function generateMigrationSQL(currentSchema, newSchema) {
         if (!config.renamedFrom || !currentTables.includes(config.renamedFrom))
             continue;
         const oldName = config.renamedFrom;
+        const isChild = typeof config.ownership === 'object';
         /* Rename the table itself. */
         renameStatements.push(`alter table ${oldName} rename to ${tableName};`);
         /* Rename associated triggers. */
-        renameStatements.push(`alter trigger set_user_id_${oldName} on ${tableName} rename to set_user_id_${tableName};`);
+        if (!isChild) {
+            renameStatements.push(`alter trigger set_user_id_${oldName} on ${tableName} rename to set_user_id_${tableName};`);
+        }
         renameStatements.push(`alter trigger update_${oldName}_updated_at on ${tableName} rename to update_${tableName}_updated_at;`);
-        /* Rename associated RLS policy. */
-        renameStatements.push(`alter policy "Users can manage own ${oldName}" on ${tableName} rename to "Users can manage own ${tableName}";`);
+        /* Rename associated RLS policies. */
+        if (isChild) {
+            for (const op of ['view', 'create', 'update', 'delete']) {
+                renameStatements.push(`alter policy "Owner can ${op} ${oldName}" on ${tableName} rename to "Owner can ${op} ${tableName}";`);
+            }
+        }
+        else {
+            renameStatements.push(`alter policy "Users can manage own ${oldName}" on ${tableName} rename to "Users can manage own ${tableName}";`);
+        }
         /* Rename associated indexes. */
-        renameStatements.push(`alter index idx_${oldName}_user_id rename to idx_${tableName}_user_id;`);
+        if (!isChild) {
+            renameStatements.push(`alter index idx_${oldName}_user_id rename to idx_${tableName}_user_id;`);
+        }
         renameStatements.push(`alter index idx_${oldName}_updated_at rename to idx_${tableName}_updated_at;`);
         renameStatements.push(`alter index idx_${oldName}_deleted rename to idx_${tableName}_deleted;`);
         /* Rename columns if specified. */

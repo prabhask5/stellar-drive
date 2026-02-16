@@ -249,8 +249,24 @@ export interface SchemaTableConfig {
     indexes?: string;
     /** Single row per user (e.g., user settings). @default false */
     singleton?: boolean;
-    /** Override the default `'user_id'` ownership column. */
-    ownership?: string;
+    /**
+     * Row ownership configuration for RLS policy generation.
+     *
+     * - **Omitted / `'user_id'`** (default) — Table has its own `user_id` column.
+     *   Generates `auth.uid() = user_id` RLS policy.
+     * - **`string`** — Custom ownership column name (e.g., `'owner_id'`).
+     * - **`{ parent, fk }`** — Child table that inherits ownership through a
+     *   parent FK. Generates `exists (select 1 from <parent> where id = <table>.<fk>
+     *   and user_id = auth.uid())` RLS policies. No `user_id` column is added.
+     *
+     * @example
+     * // Child table referencing goal_lists:
+     * goals: { ownership: { parent: 'goal_lists', fk: 'goal_list_id' }, ... }
+     */
+    ownership?: string | {
+        parent: string;
+        fk: string;
+    };
     /** Explicit Supabase SELECT columns (egress optimization). @default '*' */
     columns?: string;
     /** Override auto-generated camelCase Dexie table name. */
