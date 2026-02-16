@@ -256,14 +256,17 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
     if (existsSync(typesAbsPath)) {
         existingContent = readFileSync(typesAbsPath, 'utf-8');
     }
+    const relTypesPath = relative(projectRoot, typesAbsPath);
     if (tsContent !== existingContent) {
         const typesDir = dirname(typesAbsPath);
         if (!existsSync(typesDir)) {
             mkdirSync(typesDir, { recursive: true });
         }
         writeFileSync(typesAbsPath, tsContent, 'utf-8');
-        const relPath = relative(projectRoot, typesAbsPath);
-        console.log(`[stellar] Types generated at ${relPath}`);
+        console.log(`[stellar] Types updated at ${relTypesPath}`);
+    }
+    else {
+        console.log(`[stellar] Types unchanged at ${relTypesPath}`);
     }
     /* 2. Load the previous schema snapshot for migration diffing. */
     const snapshot = loadSnapshot(projectRoot);
@@ -277,8 +280,15 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
         if (oldJson !== newJson) {
             const migrationSQL = generateMigrationSQL(snapshot, cleanedSchema);
             if (migrationSQL) {
+                console.log(`[stellar] Migration SQL:\n${migrationSQL}`);
                 await pushMigration(migrationSQL, schemaOpts, projectRoot);
             }
+            else {
+                console.log('[stellar] Schema changed but no migration SQL needed');
+            }
+        }
+        else {
+            console.log('[stellar] Schema unchanged, no migration needed');
         }
     }
     else if (!snapshot && schemaOpts.autoMigrate) {
@@ -295,8 +305,15 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
                 appName,
                 includeHelperFunctions: true
             });
+            console.log(`[stellar] Initial schema SQL:\n${fullSQL}`);
             await pushMigration(fullSQL, schemaOpts, projectRoot);
         }
+        else {
+            console.log('[stellar] No tables in schema, skipping initial SQL generation');
+        }
+    }
+    else if (!schemaOpts.autoMigrate) {
+        console.log('[stellar] Auto-migrate disabled, skipping schema sync');
     }
     /* 3. Save the new snapshot (strip functions before serialization). */
     saveSnapshot(projectRoot, schema);
