@@ -17,7 +17,14 @@
 // - `snakeToCamel` — converts a `snake_case` string to `camelCase`.
 // - `formatBytes` — formats a byte count into a human-readable string.
 
-export { generateId, now, calculateNewOrder, snakeToCamel, formatBytes } from '../utils';
+export {
+  generateId,
+  now,
+  calculateNewOrder,
+  snakeToCamel,
+  formatBytes,
+  createAsyncGuard
+} from '../utils';
 
 // =============================================================================
 //  Debug Utilities

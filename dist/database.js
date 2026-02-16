@@ -75,6 +75,8 @@ const CRDT_SYSTEM_TABLES = {
 // =============================================================================
 /** The engine-managed Dexie instance (set by createDatabase). */
 let managedDb = null;
+/** Flag set when the database was deleted and recreated (schema mismatch or corruption). */
+let _dbWasReset = false;
 // =============================================================================
 // Database Creation
 // =============================================================================
@@ -123,6 +125,7 @@ export async function createDatabase(config, crdtEnabled = false) {
                     `DB version: ${idb.version}, Dexie version: ${db.verno}. Deleting and recreating...`);
                 db.close();
                 await Dexie.delete(config.name);
+                _dbWasReset = true;
                 db = buildDexie(config, crdtEnabled);
                 await db.open();
             }
@@ -142,6 +145,7 @@ export async function createDatabase(config, crdtEnabled = false) {
             /* Ignore close errors — the connection may already be broken. */
         }
         await Dexie.delete(config.name);
+        _dbWasReset = true;
         db = buildDexie(config, crdtEnabled);
         await db.open();
     }
@@ -190,6 +194,30 @@ export function getDb() {
         throw new Error('No database available. Call initEngine() with schema or database config first.');
     }
     return managedDb;
+}
+/**
+ * Check whether the database was deleted and recreated during initialization.
+ *
+ * Returns `true` if the database was nuked (schema mismatch, corruption, or
+ * manual reset) and hasn't completed hydration yet. The flag is cleared
+ * automatically after hydration completes.
+ *
+ * @returns `true` if the DB was reset and needs hydration.
+ *
+ * @see {@link clearDbResetFlag} for manual flag clearing
+ * @see {@link engine.ts#hydrateFromRemote} for the hydration lifecycle
+ */
+export function wasDbReset() {
+    return _dbWasReset;
+}
+/**
+ * Clear the DB-reset flag after hydration completes.
+ *
+ * Called automatically by the engine after successful hydration. Can also be
+ * called manually if the app needs to dismiss the reset state.
+ */
+export function clearDbResetFlag() {
+    _dbWasReset = false;
 }
 /**
  * Compute a stable Dexie version number from a merged store schema.
@@ -309,6 +337,7 @@ export async function resetDatabase() {
     managedDb = null;
     /* Delete the database. */
     await Dexie.delete(dbName);
+    _dbWasReset = true;
     /*
      * Clear sync cursors from localStorage, but NOT auth session keys —
      * preserving the Supabase session allows the app to recover the same

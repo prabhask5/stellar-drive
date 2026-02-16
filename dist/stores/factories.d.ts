@@ -137,4 +137,115 @@ export declare function createCollectionStore<T>(config: CollectionStoreConfig<T
  * ```
  */
 export declare function createDetailStore<T>(config: DetailStoreConfig<T>): DetailStore<T>;
+/**
+ * Configuration for creating a CRUD collection store.
+ *
+ * @typeParam T - The entity type stored in the collection.
+ */
+export interface CrudCollectionStoreConfig<T> {
+    /** The Supabase table name for CRUD operations. */
+    table: string;
+    /** Async function that fetches the full collection (e.g., from local DB). */
+    load: () => Promise<T[]>;
+    /**
+     * Indexed field name used for computing prepend order on create.
+     * When set, new entities get an `order` value that places them at the
+     * top of the list filtered by this index. For example, `'user_id'`
+     * means the order is computed relative to all entities with the same user_id.
+     */
+    orderIndexField?: string;
+}
+/**
+ * A reactive CRUD collection store with built-in create, update, delete,
+ * and reorder operations, plus optimistic UI mutations.
+ *
+ * Extends {@link CollectionStore} with standard CRUD methods that handle:
+ * - Local DB writes via the sync engine
+ * - Sync queue enqueuing for remote propagation
+ * - Remote change tracking for UI animations
+ * - Optimistic store mutations for instant UI updates
+ *
+ * @typeParam T - The entity type stored in the collection (must have `id`).
+ */
+export interface CrudCollectionStore<T> extends CollectionStore<T> {
+    /**
+     * Create a new entity and prepend it to the collection.
+     *
+     * Automatically generates `id`, `created_at`, `updated_at`, and computes
+     * a prepend `order` value if `orderIndexField` is configured.
+     *
+     * @param data - Partial entity data (system fields are auto-generated).
+     * @returns The created entity with all fields populated.
+     */
+    create(data: Partial<T>): Promise<T>;
+    /**
+     * Update fields on an existing entity.
+     *
+     * @param id     - The primary key of the entity to update.
+     * @param fields - Partial record of fields to merge.
+     * @returns The updated entity, or `undefined` if not found.
+     */
+    update(id: string, fields: Partial<T>): Promise<T | undefined>;
+    /**
+     * Soft-delete an entity and remove it from the collection.
+     *
+     * @param id - The primary key of the entity to delete.
+     */
+    delete(id: string): Promise<void>;
+    /**
+     * Reorder an entity to a new position.
+     *
+     * @param id       - The primary key of the entity to reorder.
+     * @param newOrder - The new order value.
+     * @returns The updated entity, or `undefined` if not found.
+     */
+    reorder(id: string, newOrder: number): Promise<T | undefined>;
+}
+/**
+ * Create a reactive CRUD collection store with built-in create, update,
+ * delete, and reorder operations.
+ *
+ * Combines the loading/refresh/sync-listener behavior of
+ * {@link createCollectionStore} with standard CRUD operations that
+ * write to the local DB, enqueue sync operations, track remote changes,
+ * and optimistically update the store.
+ *
+ * @typeParam T - The entity type (must have at least `id` and `order` fields).
+ * @param config - Configuration with table name, load function, and optional order index.
+ * @returns A `CrudCollectionStore<T>` instance.
+ *
+ * @example
+ * ```ts
+ * import { createCrudCollectionStore } from 'stellar-drive/stores';
+ * import { queryAll } from 'stellar-drive/data';
+ *
+ * interface TaskCategory {
+ *   id: string;
+ *   name: string;
+ *   color: string;
+ *   order: number;
+ *   user_id: string;
+ * }
+ *
+ * const categoriesStore = createCrudCollectionStore<TaskCategory>({
+ *   table: 'task_categories',
+ *   load: () => queryAll<TaskCategory>('task_categories', { autoRemoteFallback: true }),
+ *   orderIndexField: 'user_id',
+ * });
+ *
+ * // Usage:
+ * await categoriesStore.load();
+ * await categoriesStore.create({ name: 'Work', color: '#ff0000', user_id: userId });
+ * await categoriesStore.update(id, { name: 'Personal' });
+ * await categoriesStore.delete(id);
+ * await categoriesStore.reorder(id, 2.5);
+ * ```
+ *
+ * @see {@link createCollectionStore} for the base collection store
+ * @see {@link engineCreate} for the underlying create operation
+ * @see {@link engineUpdate} for the underlying update operation
+ * @see {@link engineDelete} for the underlying delete operation
+ * @see {@link reorderEntity} for the underlying reorder operation
+ */
+export declare function createCrudCollectionStore<T extends Record<string, unknown>>(config: CrudCollectionStoreConfig<T>): CrudCollectionStore<T>;
 //# sourceMappingURL=factories.d.ts.map

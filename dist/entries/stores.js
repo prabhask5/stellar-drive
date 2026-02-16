@@ -53,5 +53,13 @@ export { onRealtimeDataUpdate } from '../realtime';
 // Generic factory functions that create Svelte-compatible reactive stores for
 // common data-loading patterns. These eliminate the repetitive loading-state /
 // sync-listener / refresh boilerplate from every collection or detail store.
-export { createCollectionStore, createDetailStore } from '../stores/factories';
+export { createCollectionStore, createDetailStore, createCrudCollectionStore } from '../stores/factories';
+// =============================================================================
+//  Hydration & DB Reset State
+// =============================================================================
+// Functions for checking engine hydration state and database reset status:
+// - `hasHydrated` — whether initial hydration has completed this session.
+// - `wasDbReset` — whether the DB was nuked and needs full re-hydration.
+export { hasHydrated } from '../engine';
+export { wasDbReset } from '../database';
 //# sourceMappingURL=stores.js.map

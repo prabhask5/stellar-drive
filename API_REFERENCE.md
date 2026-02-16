@@ -554,9 +554,11 @@ Fetch all non-deleted records from a table, sorted by `order`.
 ```ts
 function queryAll<T>(
   table: string,
-  opts?: { remoteFallback?: boolean; orderBy?: string }
+  opts?: { remoteFallback?: boolean; orderBy?: string; autoRemoteFallback?: boolean }
 ): Promise<T[]>
 ```
+
+- `autoRemoteFallback` — Automatically falls back to Supabase when the engine hasn't completed hydration yet. Equivalent to `remoteFallback: !hasHydrated()`.
 
 ### `queryOne<T>(table, id, opts?)`
 
@@ -566,9 +568,42 @@ Fetch a single non-deleted record by ID, or `null`.
 function queryOne<T>(
   table: string,
   id: string,
-  opts?: { remoteFallback?: boolean }
+  opts?: { remoteFallback?: boolean; autoRemoteFallback?: boolean }
 ): Promise<T | null>
 ```
+
+### `queryByIndex<T>(table, index, value, opts?)`
+
+Query non-deleted records by an indexed field value, with optional `order` sorting.
+
+```ts
+function queryByIndex<T>(
+  table: string,
+  index: string,
+  value: unknown,
+  opts?: { remoteFallback?: boolean; autoRemoteFallback?: boolean; sortByOrder?: boolean }
+): Promise<T[]>
+```
+
+- Filters out soft-deleted records automatically.
+- `sortByOrder` — If `true`, sorts results by `order` ascending.
+
+### `queryByRange<T>(table, index, lower, upper, opts?)`
+
+Query non-deleted records within an inclusive range.
+
+```ts
+function queryByRange<T>(
+  table: string,
+  index: string,
+  lower: unknown,
+  upper: unknown,
+  opts?: { remoteFallback?: boolean; autoRemoteFallback?: boolean; sortByOrder?: boolean }
+): Promise<T[]>
+```
+
+- Filters out soft-deleted records automatically.
+- `sortByOrder` — If `true`, sorts results by `order` ascending.
 
 ---
 
@@ -660,6 +695,31 @@ interface DetailStore<T> {
   getCurrentId(): string | null;
 }
 ```
+
+### `createCrudCollectionStore<T>(config)`
+
+Creates a CRUD collection store with built-in create, update, delete, and reorder operations plus optimistic UI mutations. Extends `CollectionStore` with standard CRUD methods.
+
+```ts
+function createCrudCollectionStore<T>(config: CrudCollectionStoreConfig<T>): CrudCollectionStore<T>
+
+interface CrudCollectionStoreConfig<T> {
+  table: string;
+  load: () => Promise<T[]>;
+  orderIndexField?: string;
+}
+
+interface CrudCollectionStore<T> extends CollectionStore<T> {
+  create(data: Partial<T>): Promise<T>;
+  update(id: string, fields: Partial<T>): Promise<T | undefined>;
+  delete(id: string): Promise<void>;
+  reorder(id: string, newOrder: number): Promise<T | undefined>;
+}
+```
+
+- `orderIndexField` — When set, `create()` auto-computes a prepend order relative to records matching this index field.
+- `create()` auto-generates `id`, `created_at`, `updated_at`, and records a local change for animation tracking.
+- All methods optimistically update the store for instant UI feedback.
 
 ---
 
@@ -915,6 +975,22 @@ Derived boolean store: `true` when `$authState.mode` is `'supabase'`, `'offline'
 
 Derived store with display name and avatar initial.
 
+### `hasHydrated()`
+
+Check whether the engine has completed initial hydration this session. Useful for deciding if remote fallback queries are needed.
+
+```ts
+function hasHydrated(): boolean
+```
+
+### `wasDbReset()`
+
+Check whether the database was deleted and recreated during initialization (schema mismatch, corruption, or manual reset). Cleared automatically after hydration completes.
+
+```ts
+function wasDbReset(): boolean
+```
+
 ---
 
 ## Realtime
@@ -1089,6 +1165,16 @@ Format a byte count into a human-readable string (B, KB, or MB).
 ```ts
 function formatBytes(bytes: number): string
 // formatBytes(2048)  // => '2.00 KB'
+```
+
+### `createAsyncGuard(fn)`
+
+Create a concurrency guard that prevents overlapping async invocations. If called while a previous invocation is running, the new call returns `undefined`.
+
+```ts
+function createAsyncGuard<Args extends unknown[], R>(
+  fn: (...args: Args) => Promise<R>
+): (...args: Args) => Promise<R | undefined>
 ```
 
 ---

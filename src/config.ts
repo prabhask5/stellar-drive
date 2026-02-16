@@ -419,6 +419,32 @@ export function getTableColumns(supabaseName: string): string {
  * //   { supabaseName: 'focus_settings', columns: '*', ownershipFilter: 'user_id', isSingleton: true },
  * // ]
  */
+/**
+ * Build a comma-separated column list from a schema's `fields` definition.
+ *
+ * Combines the standard system columns (always present on every synced table)
+ * with the app-specific columns declared in `fields`. Returns `null` if no
+ * fields are declared, falling back to `'*'` (SELECT all).
+ *
+ * @param config - The per-table schema configuration.
+ * @returns A comma-separated column string, or `null` if no fields are declared.
+ * @internal
+ */
+function buildColumnsFromFields(config: SchemaTableConfig): string | null {
+  if (!config.fields || Object.keys(config.fields).length === 0) return null;
+  const systemCols = [
+    'id',
+    'user_id',
+    'created_at',
+    'updated_at',
+    'deleted',
+    '_version',
+    'device_id'
+  ];
+  const appCols = Object.keys(config.fields);
+  return [...systemCols, ...appCols].join(',');
+}
+
 function generateTablesFromSchema(schema: SchemaDefinition): TableConfig[] {
   const tables: TableConfig[] = [];
 
@@ -429,7 +455,7 @@ function generateTablesFromSchema(schema: SchemaDefinition): TableConfig[] {
 
     const tableConfig: TableConfig = {
       supabaseName: tableName,
-      columns: config.columns || '*',
+      columns: config.columns || buildColumnsFromFields(config) || '*',
       ownershipFilter: config.ownership || 'user_id'
     };
 

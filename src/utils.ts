@@ -173,3 +173,49 @@ export function calculateNewOrder<T extends { order: number }>(
 
   return midpoint;
 }
+
+// =============================================================================
+// Concurrency Utilities
+// =============================================================================
+
+/**
+ * Create a concurrency guard that prevents overlapping async invocations.
+ *
+ * Wraps an async function so that if it's called while a previous invocation is
+ * still running, the new call is silently skipped (returns `undefined`). This is
+ * useful for event-driven handlers (e.g., timer ticks, realtime updates) where
+ * overlapping execution would cause race conditions or duplicate work.
+ *
+ * @typeParam Args - The argument types of the wrapped function.
+ * @typeParam R - The return type of the wrapped function.
+ * @param fn - The async function to guard against concurrent execution.
+ * @returns A wrapped function that skips calls while the previous one is running.
+ *
+ * @example
+ * ```ts
+ * const guardedSave = createAsyncGuard(async (data: SavePayload) => {
+ *   await api.save(data);
+ *   return { saved: true };
+ * });
+ *
+ * // First call executes normally
+ * await guardedSave(payload); // → { saved: true }
+ *
+ * // If called again while the first is still running, returns undefined
+ * guardedSave(payload); // → Promise<undefined> (skipped)
+ * ```
+ */
+export function createAsyncGuard<Args extends unknown[], R>(
+  fn: (...args: Args) => Promise<R>
+): (...args: Args) => Promise<R | undefined> {
+  let running = false;
+  return async (...args: Args): Promise<R | undefined> => {
+    if (running) return undefined;
+    running = true;
+    try {
+      return await fn(...args);
+    } finally {
+      running = false;
+    }
+  };
+}

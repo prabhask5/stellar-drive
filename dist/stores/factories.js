@@ -13,6 +13,9 @@
  */
 import { writable } from 'svelte/store';
 import { onSyncComplete } from '../engine';
+import { engineCreate, engineUpdate, engineDelete, reorderEntity, prependOrder } from '../data';
+import { generateId, now } from '../utils';
+import { remoteChangesStore } from './remoteChanges';
 // =============================================================================
 // Collection Store Factory
 // =============================================================================
@@ -151,6 +154,112 @@ export function createDetailStore(config) {
         },
         getCurrentId() {
             return currentId;
+        }
+    };
+}
+/**
+ * Create a reactive CRUD collection store with built-in create, update,
+ * delete, and reorder operations.
+ *
+ * Combines the loading/refresh/sync-listener behavior of
+ * {@link createCollectionStore} with standard CRUD operations that
+ * write to the local DB, enqueue sync operations, track remote changes,
+ * and optimistically update the store.
+ *
+ * @typeParam T - The entity type (must have at least `id` and `order` fields).
+ * @param config - Configuration with table name, load function, and optional order index.
+ * @returns A `CrudCollectionStore<T>` instance.
+ *
+ * @example
+ * ```ts
+ * import { createCrudCollectionStore } from 'stellar-drive/stores';
+ * import { queryAll } from 'stellar-drive/data';
+ *
+ * interface TaskCategory {
+ *   id: string;
+ *   name: string;
+ *   color: string;
+ *   order: number;
+ *   user_id: string;
+ * }
+ *
+ * const categoriesStore = createCrudCollectionStore<TaskCategory>({
+ *   table: 'task_categories',
+ *   load: () => queryAll<TaskCategory>('task_categories', { autoRemoteFallback: true }),
+ *   orderIndexField: 'user_id',
+ * });
+ *
+ * // Usage:
+ * await categoriesStore.load();
+ * await categoriesStore.create({ name: 'Work', color: '#ff0000', user_id: userId });
+ * await categoriesStore.update(id, { name: 'Personal' });
+ * await categoriesStore.delete(id);
+ * await categoriesStore.reorder(id, 2.5);
+ * ```
+ *
+ * @see {@link createCollectionStore} for the base collection store
+ * @see {@link engineCreate} for the underlying create operation
+ * @see {@link engineUpdate} for the underlying update operation
+ * @see {@link engineDelete} for the underlying delete operation
+ * @see {@link reorderEntity} for the underlying reorder operation
+ */
+export function createCrudCollectionStore(config) {
+    const base = createCollectionStore(config);
+    const { subscribe, loading, load, refresh, set, mutate } = base;
+    return {
+        subscribe,
+        loading,
+        load,
+        refresh,
+        set,
+        mutate,
+        async create(data) {
+            const id = generateId();
+            const timestamp = now();
+            /* Compute prepend order if an index field is configured. */
+            let order = data.order;
+            if (order === undefined && config.orderIndexField) {
+                const indexValue = data[config.orderIndexField];
+                if (indexValue) {
+                    order = await prependOrder(config.table, config.orderIndexField, indexValue);
+                }
+                else {
+                    order = 0;
+                }
+            }
+            const payload = {
+                ...data,
+                id,
+                created_at: timestamp,
+                updated_at: timestamp,
+                ...(order !== undefined ? { order } : {})
+            };
+            remoteChangesStore.recordLocalChange(id, config.table, 'create');
+            const created = await engineCreate(config.table, payload);
+            /* Optimistic prepend — new items go to the top. */
+            mutate((items) => [created, ...items]);
+            return created;
+        },
+        async update(id, fields) {
+            const updated = await engineUpdate(config.table, id, fields);
+            if (updated) {
+                mutate((items) => items.map((item) => (item.id === id ? updated : item)));
+            }
+            return updated;
+        },
+        async delete(id) {
+            await engineDelete(config.table, id);
+            mutate((items) => items.filter((item) => item.id !== id));
+        },
+        async reorder(id, newOrder) {
+            const updated = await reorderEntity(config.table, id, newOrder);
+            if (updated) {
+                mutate((items) => items
+                    .map((item) => (item.id === id ? updated : item))
+                    .sort((a, b) => (a.order ?? 0) -
+                    (b.order ?? 0)));
+            }
+            return updated;
         }
     };
 }

@@ -81,6 +81,26 @@ export declare function createDatabase(config: DatabaseConfig, crdtEnabled?: boo
  */
 export declare function getDb(): Dexie;
 /**
+ * Check whether the database was deleted and recreated during initialization.
+ *
+ * Returns `true` if the database was nuked (schema mismatch, corruption, or
+ * manual reset) and hasn't completed hydration yet. The flag is cleared
+ * automatically after hydration completes.
+ *
+ * @returns `true` if the DB was reset and needs hydration.
+ *
+ * @see {@link clearDbResetFlag} for manual flag clearing
+ * @see {@link engine.ts#hydrateFromRemote} for the hydration lifecycle
+ */
+export declare function wasDbReset(): boolean;
+/**
+ * Clear the DB-reset flag after hydration completes.
+ *
+ * Called automatically by the engine after successful hydration. Can also be
+ * called manually if the app needs to dismiss the reset state.
+ */
+export declare function clearDbResetFlag(): void;
+/**
  * Result of schema version computation.
  *
  * Contains the resolved version number plus the previous stores schema

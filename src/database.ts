@@ -113,6 +113,9 @@ const CRDT_SYSTEM_TABLES: Record<string, string> = {
 /** The engine-managed Dexie instance (set by createDatabase). */
 let managedDb: Dexie | null = null;
 
+/** Flag set when the database was deleted and recreated (schema mismatch or corruption). */
+let _dbWasReset = false;
+
 // =============================================================================
 // Database Creation
 // =============================================================================
@@ -166,6 +169,7 @@ export async function createDatabase(config: DatabaseConfig, crdtEnabled = false
         );
         db.close();
         await Dexie.delete(config.name);
+        _dbWasReset = true;
         db = buildDexie(config, crdtEnabled);
         await db.open();
       }
@@ -183,6 +187,7 @@ export async function createDatabase(config: DatabaseConfig, crdtEnabled = false
       /* Ignore close errors — the connection may already be broken. */
     }
     await Dexie.delete(config.name);
+    _dbWasReset = true;
     db = buildDexie(config, crdtEnabled);
     await db.open();
   }
@@ -238,6 +243,32 @@ export function getDb(): Dexie {
     );
   }
   return managedDb;
+}
+
+/**
+ * Check whether the database was deleted and recreated during initialization.
+ *
+ * Returns `true` if the database was nuked (schema mismatch, corruption, or
+ * manual reset) and hasn't completed hydration yet. The flag is cleared
+ * automatically after hydration completes.
+ *
+ * @returns `true` if the DB was reset and needs hydration.
+ *
+ * @see {@link clearDbResetFlag} for manual flag clearing
+ * @see {@link engine.ts#hydrateFromRemote} for the hydration lifecycle
+ */
+export function wasDbReset(): boolean {
+  return _dbWasReset;
+}
+
+/**
+ * Clear the DB-reset flag after hydration completes.
+ *
+ * Called automatically by the engine after successful hydration. Can also be
+ * called manually if the app needs to dismiss the reset state.
+ */
+export function clearDbResetFlag(): void {
+  _dbWasReset = false;
 }
 
 // =============================================================================
@@ -399,6 +430,7 @@ export async function resetDatabase(): Promise<string | null> {
 
   /* Delete the database. */
   await Dexie.delete(dbName);
+  _dbWasReset = true;
 
   /*
    * Clear sync cursors from localStorage, but NOT auth session keys —

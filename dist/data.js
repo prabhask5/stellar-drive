@@ -30,7 +30,7 @@
 import { getTableMap, getTableColumns } from './config';
 import { getDb } from './database';
 import { queueCreateOperation, queueDeleteOperation, queueSyncOperation } from './queue';
-import { markEntityModified, scheduleSyncPush } from './engine';
+import { markEntityModified, scheduleSyncPush, hasHydrated } from './engine';
 import { generateId, now } from './utils';
 import { debugError } from './debug';
 import { supabase } from './supabase/client';
@@ -759,12 +759,16 @@ export async function engineGetOrCreate(table, index, value, defaults, opts) {
  *
  * const categories = await queryAll<TaskCategory>('task_categories');
  * // Returns only non-deleted records, sorted by order ascending
+ *
+ * // Auto remote fallback: uses Supabase when not yet hydrated
+ * const tasks = await queryAll<Task>('tasks', { autoRemoteFallback: true });
  * ```
  *
  * @see {@link engineGetAll} for the underlying query
  */
 export async function queryAll(table, opts) {
-    const results = await engineGetAll(table, opts);
+    const remoteFallback = opts?.remoteFallback ?? (opts?.autoRemoteFallback ? !hasHydrated() : false);
+    const results = await engineGetAll(table, { orderBy: opts?.orderBy, remoteFallback });
     return results
         .filter((item) => !item.deleted)
         .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -790,15 +794,102 @@ export async function queryAll(table, opts) {
  *
  * const task = await queryOne<Task>('tasks', taskId);
  * if (!task) console.log('Not found or deleted');
+ *
+ * // Auto remote fallback: uses Supabase when not yet hydrated
+ * const task = await queryOne<Task>('tasks', taskId, { autoRemoteFallback: true });
  * ```
  *
  * @see {@link engineGet} for the underlying query
  */
 export async function queryOne(table, id, opts) {
-    const record = await engineGet(table, id, opts);
+    const remoteFallback = opts?.remoteFallback ?? (opts?.autoRemoteFallback ? !hasHydrated() : false);
+    const record = await engineGet(table, id, { remoteFallback });
     if (!record || record.deleted)
         return null;
     return record;
+}
+// =============================================================================
+// INDEX AND RANGE QUERY HELPERS
+// =============================================================================
+/**
+ * Query non-deleted records by an indexed field value, with optional ordering.
+ *
+ * A convenience wrapper around {@link engineQuery} that filters out soft-deleted
+ * records and optionally sorts by the `order` field. Supports the same remote
+ * fallback options as other query helpers.
+ *
+ * @typeParam T - The entity type.
+ * @param table - The Supabase table name.
+ * @param index - The indexed field to filter on.
+ * @param value - The value to match against the indexed field.
+ * @param opts  - Optional configuration.
+ * @param opts.remoteFallback      - Explicit remote fallback flag.
+ * @param opts.autoRemoteFallback  - If `true`, falls back to Supabase when not yet hydrated.
+ * @param opts.sortByOrder         - If `true`, sorts results by `order` ascending.
+ * @returns An array of non-deleted matching records.
+ *
+ * @example
+ * ```ts
+ * import { queryByIndex } from 'stellar-drive/data';
+ *
+ * // Get all goals in a list, sorted by order
+ * const goals = await queryByIndex<Goal>('goals', 'goal_list_id', listId, {
+ *   autoRemoteFallback: true,
+ *   sortByOrder: true,
+ * });
+ * ```
+ *
+ * @see {@link engineQuery} for the underlying query
+ */
+export async function queryByIndex(table, index, value, opts) {
+    const remoteFallback = opts?.remoteFallback ?? (opts?.autoRemoteFallback ? !hasHydrated() : false);
+    const results = await engineQuery(table, index, value, { remoteFallback });
+    let filtered = results.filter((item) => !item.deleted);
+    if (opts?.sortByOrder) {
+        filtered = filtered.sort((a, b) => (a.order ?? 0) -
+            (b.order ?? 0));
+    }
+    return filtered;
+}
+/**
+ * Query non-deleted records within an inclusive range, with optional ordering.
+ *
+ * A convenience wrapper around {@link engineQueryRange} that filters out
+ * soft-deleted records and optionally sorts by the `order` field.
+ *
+ * @typeParam T - The entity type.
+ * @param table - The Supabase table name.
+ * @param index - The indexed field to filter on.
+ * @param lower - The inclusive lower bound.
+ * @param upper - The inclusive upper bound.
+ * @param opts  - Optional configuration.
+ * @param opts.remoteFallback      - Explicit remote fallback flag.
+ * @param opts.autoRemoteFallback  - If `true`, falls back to Supabase when not yet hydrated.
+ * @param opts.sortByOrder         - If `true`, sorts results by `order` ascending.
+ * @returns An array of non-deleted matching records within the range.
+ *
+ * @example
+ * ```ts
+ * import { queryByRange } from 'stellar-drive/data';
+ *
+ * // Get daily progress for a date range
+ * const progress = await queryByRange<DailyProgress>(
+ *   'daily_goal_progress', 'date', startDate, endDate,
+ *   { remoteFallback: true }
+ * );
+ * ```
+ *
+ * @see {@link engineQueryRange} for the underlying query
+ */
+export async function queryByRange(table, index, lower, upper, opts) {
+    const remoteFallback = opts?.remoteFallback ?? (opts?.autoRemoteFallback ? !hasHydrated() : false);
+    const results = await engineQueryRange(table, index, lower, upper, { remoteFallback });
+    let filtered = results.filter((item) => !item.deleted);
+    if (opts?.sortByOrder) {
+        filtered = filtered.sort((a, b) => (a.order ?? 0) -
+            (b.order ?? 0));
+    }
+    return filtered;
 }
 // =============================================================================
 // REPOSITORY HELPERS

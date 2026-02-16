@@ -84,6 +84,17 @@ interface SyncCycleStats {
     durationMs: number;
 }
 /**
+ * Check whether the engine has completed initial hydration this session.
+ *
+ * Returns `true` after the first hydration attempt completes (even if the
+ * local DB already had data). Useful for deciding whether remote fallback
+ * queries are needed — before hydration, the local DB may be empty and
+ * queries should fall back to Supabase.
+ *
+ * @returns `true` if hydration has been attempted this session.
+ */
+export declare function hasHydrated(): boolean;
+/**
  * Mark an entity as recently modified to protect it from being overwritten by pull.
  *
  * Called by repository functions after every local write. The protection expires

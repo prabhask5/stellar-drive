@@ -57,6 +57,7 @@
  */
 
 import { getEngineConfig, getDexieTableFor, waitForDb } from './config';
+import { clearDbResetFlag } from './database';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import {
   getPendingSync,
@@ -427,6 +428,20 @@ let syncInterval: ReturnType<typeof setInterval> | null = null;
 
 /** Whether initial hydration (empty-DB pull) has been attempted this session */
 let _hasHydrated = false;
+
+/**
+ * Check whether the engine has completed initial hydration this session.
+ *
+ * Returns `true` after the first hydration attempt completes (even if the
+ * local DB already had data). Useful for deciding whether remote fallback
+ * queries are needed — before hydration, the local DB may be empty and
+ * queries should fall back to Supabase.
+ *
+ * @returns `true` if hydration has been attempted this session.
+ */
+export function hasHydrated(): boolean {
+  return _hasHydrated;
+}
 
 // --- EGRESS OPTIMIZATION: Cached user validation ---
 // `getUser()` makes a network round-trip to Supabase. Calling it every sync cycle
@@ -2169,6 +2184,7 @@ async function hydrateFromRemote(): Promise<void> {
 
   // Mark that we've attempted hydration (even if local has data)
   _hasHydrated = true;
+  clearDbResetFlag();
 
   // Check if local DB has any data
   let hasLocalData = false;

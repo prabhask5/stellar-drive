@@ -417,6 +417,9 @@ export declare function engineGetOrCreate(table: string, index: string, value: u
  *
  * const categories = await queryAll<TaskCategory>('task_categories');
  * // Returns only non-deleted records, sorted by order ascending
+ *
+ * // Auto remote fallback: uses Supabase when not yet hydrated
+ * const tasks = await queryAll<Task>('tasks', { autoRemoteFallback: true });
  * ```
  *
  * @see {@link engineGetAll} for the underlying query
@@ -424,6 +427,7 @@ export declare function engineGetOrCreate(table: string, index: string, value: u
 export declare function queryAll<T extends Record<string, unknown>>(table: string, opts?: {
     remoteFallback?: boolean;
     orderBy?: string;
+    autoRemoteFallback?: boolean;
 }): Promise<T[]>;
 /**
  * Fetch a single non-deleted record by ID, or `null`.
@@ -446,13 +450,87 @@ export declare function queryAll<T extends Record<string, unknown>>(table: strin
  *
  * const task = await queryOne<Task>('tasks', taskId);
  * if (!task) console.log('Not found or deleted');
+ *
+ * // Auto remote fallback: uses Supabase when not yet hydrated
+ * const task = await queryOne<Task>('tasks', taskId, { autoRemoteFallback: true });
  * ```
  *
  * @see {@link engineGet} for the underlying query
  */
 export declare function queryOne<T extends Record<string, unknown>>(table: string, id: string, opts?: {
     remoteFallback?: boolean;
+    autoRemoteFallback?: boolean;
 }): Promise<T | null>;
+/**
+ * Query non-deleted records by an indexed field value, with optional ordering.
+ *
+ * A convenience wrapper around {@link engineQuery} that filters out soft-deleted
+ * records and optionally sorts by the `order` field. Supports the same remote
+ * fallback options as other query helpers.
+ *
+ * @typeParam T - The entity type.
+ * @param table - The Supabase table name.
+ * @param index - The indexed field to filter on.
+ * @param value - The value to match against the indexed field.
+ * @param opts  - Optional configuration.
+ * @param opts.remoteFallback      - Explicit remote fallback flag.
+ * @param opts.autoRemoteFallback  - If `true`, falls back to Supabase when not yet hydrated.
+ * @param opts.sortByOrder         - If `true`, sorts results by `order` ascending.
+ * @returns An array of non-deleted matching records.
+ *
+ * @example
+ * ```ts
+ * import { queryByIndex } from 'stellar-drive/data';
+ *
+ * // Get all goals in a list, sorted by order
+ * const goals = await queryByIndex<Goal>('goals', 'goal_list_id', listId, {
+ *   autoRemoteFallback: true,
+ *   sortByOrder: true,
+ * });
+ * ```
+ *
+ * @see {@link engineQuery} for the underlying query
+ */
+export declare function queryByIndex<T extends Record<string, unknown>>(table: string, index: string, value: unknown, opts?: {
+    remoteFallback?: boolean;
+    autoRemoteFallback?: boolean;
+    sortByOrder?: boolean;
+}): Promise<T[]>;
+/**
+ * Query non-deleted records within an inclusive range, with optional ordering.
+ *
+ * A convenience wrapper around {@link engineQueryRange} that filters out
+ * soft-deleted records and optionally sorts by the `order` field.
+ *
+ * @typeParam T - The entity type.
+ * @param table - The Supabase table name.
+ * @param index - The indexed field to filter on.
+ * @param lower - The inclusive lower bound.
+ * @param upper - The inclusive upper bound.
+ * @param opts  - Optional configuration.
+ * @param opts.remoteFallback      - Explicit remote fallback flag.
+ * @param opts.autoRemoteFallback  - If `true`, falls back to Supabase when not yet hydrated.
+ * @param opts.sortByOrder         - If `true`, sorts results by `order` ascending.
+ * @returns An array of non-deleted matching records within the range.
+ *
+ * @example
+ * ```ts
+ * import { queryByRange } from 'stellar-drive/data';
+ *
+ * // Get daily progress for a date range
+ * const progress = await queryByRange<DailyProgress>(
+ *   'daily_goal_progress', 'date', startDate, endDate,
+ *   { remoteFallback: true }
+ * );
+ * ```
+ *
+ * @see {@link engineQueryRange} for the underlying query
+ */
+export declare function queryByRange<T extends Record<string, unknown>>(table: string, index: string, lower: unknown, upper: unknown, opts?: {
+    remoteFallback?: boolean;
+    autoRemoteFallback?: boolean;
+    sortByOrder?: boolean;
+}): Promise<T[]>;
 /**
  * Update just the `order` field on any entity.
  *
