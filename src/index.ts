@@ -37,7 +37,7 @@
 // `SyncEngineConfig` and `TableConfig` describe the configuration shape.
 
 export { initEngine } from './config';
-export type { SyncEngineConfig, TableConfig } from './config';
+export type { SyncEngineConfig, TableConfig, InitEngineInput } from './config';
 
 // =============================================================================
 //  Database Access
@@ -48,6 +48,8 @@ export type { SyncEngineConfig, TableConfig } from './config';
 
 export { getDb, resetDatabase } from './database';
 export type { DatabaseConfig, DatabaseVersionConfig } from './database';
+export { SYSTEM_INDEXES, computeSchemaVersion } from './database';
+export type { SchemaVersionResult } from './database';
 
 // =============================================================================
 //  Engine Lifecycle
@@ -333,8 +335,26 @@ export type {
   AuthMode,
   SingleUserConfig,
   SingleUserGateType,
-  TrustedDevice
+  TrustedDevice,
+  SchemaDefinition,
+  SchemaTableConfig,
+  AuthConfig,
+  FieldType
 } from './types';
+
+// =============================================================================
+//  SQL Generation
+// =============================================================================
+// Generate complete Supabase SQL from a declarative schema definition.
+// These are also available via `@prabhask5/stellar-engine/utils`.
+
+export {
+  generateSupabaseSQL,
+  inferColumnType,
+  generateMigrationSQL,
+  generateTypeScript
+} from './schema';
+export type { SQLGenerationOptions, TypeScriptGenerationOptions } from './schema';
 
 // =============================================================================
 //  Third-Party Re-exports

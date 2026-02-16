@@ -31,4 +31,12 @@ export { debug, isDebugMode, setDebugMode } from '../debug';
 // - `getDiagnostics` — returns a comprehensive JSON snapshot of all engine state.
 // - Sub-category functions for lightweight access to specific sections.
 export { getDiagnostics, getSyncDiagnostics, getRealtimeDiagnostics, getQueueDiagnostics, getConflictDiagnostics, getEngineDiagnostics, getNetworkDiagnostics, getErrorDiagnostics } from '../diagnostics';
+// =============================================================================
+//  SQL Generation
+// =============================================================================
+// Generate complete Supabase SQL from a declarative schema definition:
+// - `generateSupabaseSQL` — produces CREATE TABLE, RLS, triggers, indexes.
+// - `inferColumnType` — maps field names to SQL types via naming conventions.
+// - `generateMigrationSQL` — diffs two schemas and produces ALTER statements.
+export { generateSupabaseSQL, inferColumnType, generateMigrationSQL, generateTypeScript } from '../schema';
 //# sourceMappingURL=utils.js.map

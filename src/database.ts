@@ -53,6 +53,26 @@ export interface DatabaseConfig {
 }
 
 // =============================================================================
+// System Indexes
+// =============================================================================
+
+/**
+ * Dexie indexes automatically appended to every app table when using the
+ * schema-driven API (`initEngine({ schema: {...} })`).
+ *
+ * These correspond to the system columns that every synced table has:
+ * - `id`         — UUID primary key
+ * - `user_id`    — ownership filter for RLS
+ * - `created_at` — creation timestamp
+ * - `updated_at` — last modification timestamp (sync cursor)
+ * - `deleted`    — soft-delete flag
+ * - `_version`   — optimistic concurrency version counter
+ *
+ * @see {@link config.ts#generateDatabaseFromSchema} for usage
+ */
+export const SYSTEM_INDEXES = 'id, user_id, created_at, updated_at, deleted, _version';
+
+// =============================================================================
 // System Tables
 // =============================================================================
 
@@ -234,6 +254,131 @@ export function getDb(): Dexie {
  */
 export function _setManagedDb(db: Dexie): void {
   managedDb = db;
+}
+
+// =============================================================================
+// Schema Auto-Versioning
+// =============================================================================
+
+/**
+ * Result of schema version computation.
+ *
+ * Contains the resolved version number plus the previous stores schema
+ * (if any) so that the caller can declare both versions and give Dexie
+ * a proper upgrade path.
+ */
+export interface SchemaVersionResult {
+  /** The resolved Dexie version number (positive integer, starts at 1). */
+  version: number;
+  /**
+   * The previous version's store schema, or `null` if this is the first
+   * run or no change was detected. When non-null, the caller should declare
+   * **both** `previousStores` at `version - 1` and the current stores at
+   * `version` so Dexie can perform a non-destructive upgrade.
+   */
+  previousStores: Record<string, string> | null;
+  /** The previous version number, or `null` if no upgrade is needed. */
+  previousVersion: number | null;
+}
+
+/**
+ * Compute a stable Dexie version number from a merged store schema.
+ *
+ * Uses a localStorage-backed hash comparison to detect schema changes:
+ *   1. Compute a deterministic hash of the stringified stores object.
+ *   2. Compare to the previously stored hash in localStorage.
+ *   3. If changed → increment the stored version, persist both hash and
+ *      previous stores schema, and return the upgrade info.
+ *   4. If unchanged → return the stored version.
+ *   5. If first run → return version 1.
+ *
+ * When a schema change is detected, the previous stores schema is returned
+ * so that the caller can declare both versions. This gives Dexie a proper
+ * upgrade path (version N → version N+1) instead of requiring a full
+ * database rebuild.
+ *
+ * @param prefix - Application prefix for namespacing localStorage keys.
+ * @param mergedStores - The complete Dexie store schema (app + system tables).
+ * @returns Version info including previous stores for upgrade path.
+ *
+ * @example
+ * const result = computeSchemaVersion('stellar', {
+ *   goals: 'id, user_id, goal_list_id, order',
+ * });
+ * // First run:  { version: 1, previousStores: null, previousVersion: null }
+ * // On change:  { version: 2, previousStores: { goals: '...' }, previousVersion: 1 }
+ *
+ * @see {@link config.ts#generateDatabaseFromSchema} for the caller
+ */
+export function computeSchemaVersion(
+  prefix: string,
+  mergedStores: Record<string, string>
+): SchemaVersionResult {
+  /* 1. Build a stable, sorted string representation of the schema. */
+  const schemaString = JSON.stringify(
+    Object.keys(mergedStores)
+      .sort()
+      .map((k) => `${k}:${mergedStores[k]}`)
+  );
+  const hash = djb2Hash(schemaString);
+
+  /* 2. Compare to the stored hash. */
+  const hashKey = `${prefix}_schema_hash`;
+  const versionKey = `${prefix}_schema_version`;
+  const storesKey = `${prefix}_schema_stores`;
+
+  /* Guard for SSR or environments without localStorage. */
+  if (typeof localStorage === 'undefined') {
+    return { version: 1, previousStores: null, previousVersion: null };
+  }
+
+  const storedHash = localStorage.getItem(hashKey);
+  const storedVersion = parseInt(localStorage.getItem(versionKey) || '0', 10);
+
+  if (storedHash === hash) {
+    /* Schema unchanged — use the stored version. */
+    return { version: storedVersion || 1, previousStores: null, previousVersion: null };
+  }
+
+  /* 3. Schema changed (or first run) — bump version. */
+  const newVersion = (storedVersion || 0) + 1;
+
+  /* Retrieve the previous stores schema for the upgrade path. */
+  let previousStores: Record<string, string> | null = null;
+  const previousVersion = storedVersion || null;
+  const storedStores = localStorage.getItem(storesKey);
+  if (storedStores) {
+    try {
+      previousStores = JSON.parse(storedStores);
+    } catch {
+      /* Corrupted — treat as first run. */
+    }
+  }
+
+  /* Persist the new state. */
+  localStorage.setItem(hashKey, hash);
+  localStorage.setItem(versionKey, String(newVersion));
+  localStorage.setItem(storesKey, JSON.stringify(mergedStores));
+  return { version: newVersion, previousStores, previousVersion };
+}
+
+/**
+ * DJB2 hash function — fast, deterministic string hash.
+ *
+ * Produces a hex string from an arbitrary input string. Not cryptographic,
+ * but sufficient for detecting schema changes across app restarts.
+ *
+ * @param str - The input string to hash.
+ * @returns A hex string representation of the hash.
+ * @internal
+ */
+function djb2Hash(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 33) ^ str.charCodeAt(i);
+  }
+  /* Convert to unsigned 32-bit integer, then to hex. */
+  return (hash >>> 0).toString(16);
 }
 
 // =============================================================================

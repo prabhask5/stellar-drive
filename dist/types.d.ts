@@ -199,6 +199,145 @@ export interface SingleUserConfig {
     updatedAt: string;
 }
 /**
+ * Declares a column's type in the schema `fields` map.
+ *
+ * - **String shorthand:** `'string'`, `'number?'`, `'uuid'`, `'boolean'`, `'date'`, `'timestamp'`, `'json'`
+ *   Append `?` for nullable (e.g., `'string?'` → `string | null` / `text`).
+ * - **Enum array:** `['a', 'b', 'c']` → union type `'a' | 'b' | 'c'` / SQL `text not null`.
+ * - **Enum object:** `{ enum: ['a', 'b'], nullable: true, enumName: 'MyType' }` — full control.
+ */
+export type FieldType = string | string[] | {
+    enum: string[];
+    nullable?: boolean;
+    enumName?: string;
+};
+/**
+ * Declarative schema definition for the sync engine.
+ *
+ * Each key is a Supabase table name (snake_case), and the value is either:
+ * - A **string** of app-specific Dexie indexes (system indexes auto-appended)
+ * - A **{@link SchemaTableConfig}** object for full control
+ *
+ * The engine auto-generates `TableConfig[]`, Dexie stores, and database
+ * versioning from this single declaration — replacing the manual `tables`
+ * and `database` configuration.
+ *
+ * @example
+ * const schema: SchemaDefinition = {
+ *   goals: 'goal_list_id, order',           // string shorthand
+ *   focus_settings: { singleton: true },     // object form
+ *   projects: 'is_current, order',
+ * };
+ *
+ * @see {@link config.ts#initEngine} for usage in `initEngine({ schema })`
+ */
+export type SchemaDefinition = Record<string, string | SchemaTableConfig>;
+/**
+ * Per-table configuration when using the object form of {@link SchemaDefinition}.
+ *
+ * String form (`'goal_list_id, order'`) is sugar for `{ indexes: 'goal_list_id, order' }`.
+ *
+ * @example
+ * {
+ *   indexes: 'goal_list_id, order',
+ *   singleton: false,
+ *   sqlColumns: { name: 'text not null', type: "text default 'goal'" },
+ * }
+ */
+export interface SchemaTableConfig {
+    /** App-specific Dexie indexes (system indexes auto-appended). @default '' */
+    indexes?: string;
+    /** Single row per user (e.g., user settings). @default false */
+    singleton?: boolean;
+    /** Override the default `'user_id'` ownership column. */
+    ownership?: string;
+    /** Explicit Supabase SELECT columns (egress optimization). @default '*' */
+    columns?: string;
+    /** Override auto-generated camelCase Dexie table name. */
+    dexieName?: string;
+    /** Fields to skip during conflict resolution. */
+    excludeFromConflict?: string[];
+    /** Numeric fields that attempt additive merge during conflicts. */
+    numericMergeFields?: string[];
+    /** Callback when remote change arrives for this table. */
+    onRemoteChange?: (table: string, record: Record<string, unknown>) => void;
+    /** Explicit SQL column types for `generateSupabaseSQL()`. Overrides type inference. */
+    sqlColumns?: Record<string, string>;
+    /**
+     * Declarative field definitions for TypeScript + SQL generation.
+     * Keys are column names (snake_case); values are {@link FieldType} shorthands.
+     * System columns (`id`, `user_id`, `created_at`, etc.) are auto-injected.
+     */
+    fields?: Record<string, FieldType>;
+    /** Override the auto-generated PascalCase interface name (e.g., `'LongTermTask'`). */
+    typeName?: string;
+    /**
+     * Previous table name, used as a one-time rename hint.
+     *
+     * When set, the migration generator produces `ALTER TABLE <renamedFrom> RENAME TO <newName>`
+     * instead of DROP + CREATE. The Dexie upgrade callback copies data from the old table
+     * to the new one. Remove this field after the migration has been applied.
+     *
+     * @example
+     * // Rename "todos" to "tasks":
+     * tasks: { indexes: 'project_id, order', renamedFrom: 'todos' }
+     */
+    renamedFrom?: string;
+    /**
+     * Column renames as `{ newName: oldName }`, used as one-time rename hints.
+     *
+     * Generates `ALTER TABLE ... RENAME COLUMN <oldName> TO <newName>` in the migration SQL.
+     * Remove these entries after the migration has been applied.
+     *
+     * @example
+     * // Rename the "name" column to "title":
+     * tasks: { indexes: 'project_id, order', renamedColumns: { title: 'name' } }
+     */
+    renamedColumns?: Record<string, string>;
+}
+/**
+ * Simplified authentication configuration for the sync engine.
+ *
+ * Flattens the single-user auth options to the top level instead of nesting
+ * under `singleUser: { ... }`. All fields are optional with sensible defaults
+ * that match stellar/'s configuration.
+ *
+ * The engine internally normalizes this flat config back to the existing nested
+ * structure so all auth subsystem code continues to work unchanged. The old
+ * nested `{ singleUser: {...} }` format is still accepted for backward compat
+ * (detected via presence of the `singleUser` key).
+ *
+ * @example
+ * auth: {
+ *   gateType: 'code',
+ *   codeLength: 6,
+ *   profileExtractor: (meta) => ({ firstName: meta.first_name }),
+ *   profileToMetadata: (p) => ({ first_name: p.firstName }),
+ * }
+ */
+export interface AuthConfig {
+    /** The type of gate protecting single-user mode. @default 'code' */
+    gateType?: SingleUserGateType;
+    /** Digit count for code gates. @default 6 */
+    codeLength?: 4 | 6;
+    /** Whether signup requires email confirmation before access. @default true */
+    emailConfirmation?: boolean;
+    /** Whether untrusted devices require email OTP verification. @default true */
+    deviceVerification?: boolean;
+    /** Days before a trusted device must re-verify. @default 90 */
+    trustDurationDays?: number;
+    /** Path to redirect to after email confirmation. @default '/confirm' */
+    confirmRedirectPath?: string;
+    /** Enable offline credential caching and offline sign-in. @default true */
+    enableOfflineAuth?: boolean;
+    /** How often to re-validate the Supabase session (ms). @default 3600000 */
+    sessionValidationIntervalMs?: number;
+    /** Extract app-specific profile fields from Supabase `user_metadata`. */
+    profileExtractor?: (userMetadata: Record<string, unknown>) => Record<string, unknown>;
+    /** Convert app-specific profile back to Supabase `user_metadata` shape. */
+    profileToMetadata?: (profile: Record<string, unknown>) => Record<string, unknown>;
+}
+/**
  * A trusted device record stored in the Supabase `trusted_devices` table.
  *
  * When device verification is enabled, untrusted devices must complete an

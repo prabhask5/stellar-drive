@@ -29,9 +29,11 @@
  * which expose focused subsets of this API.
  */
 export { initEngine } from './config';
-export type { SyncEngineConfig, TableConfig } from './config';
+export type { SyncEngineConfig, TableConfig, InitEngineInput } from './config';
 export { getDb, resetDatabase } from './database';
 export type { DatabaseConfig, DatabaseVersionConfig } from './database';
+export { SYSTEM_INDEXES, computeSchemaVersion } from './database';
+export type { SchemaVersionResult } from './database';
 export { startSyncEngine, runFullSync } from './engine';
 export { onSyncComplete } from './engine';
 export { engineCreate, engineUpdate, engineDelete, engineBatchWrite, engineIncrement } from './data';
@@ -64,7 +66,9 @@ export type { DiagnosticsSnapshot } from './diagnostics';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConfig } from './demo';
 export type { DemoConfig } from './demo';
-export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice } from './types';
+export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice, SchemaDefinition, SchemaTableConfig, AuthConfig, FieldType } from './types';
+export { generateSupabaseSQL, inferColumnType, generateMigrationSQL, generateTypeScript } from './schema';
+export type { SQLGenerationOptions, TypeScriptGenerationOptions } from './schema';
 export type { Session } from '@supabase/supabase-js';
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
 export { isCRDTEnabled } from './crdt/config';

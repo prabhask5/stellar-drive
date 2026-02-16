@@ -25,4 +25,4 @@
 //   precache globs, network-first vs cache-first routes, and SW behaviour.
 
 export { stellarPWA } from '../sw/build/vite-plugin.js';
-export type { SWConfig } from '../sw/build/vite-plugin.js';
+export type { SWConfig, SchemaConfig } from '../sw/build/vite-plugin.js';

@@ -15,7 +15,7 @@
 // - `SyncEngineConfig` — top-level configuration passed to `initEngine`.
 // - `TableConfig` — per-table sync configuration (conflict strategy, filters, etc.).
 
-export type { SyncEngineConfig, TableConfig } from '../config';
+export type { SyncEngineConfig, TableConfig, InitEngineInput } from '../config';
 
 // =============================================================================
 //  Database Configuration Types
@@ -23,7 +23,7 @@ export type { SyncEngineConfig, TableConfig } from '../config';
 // - `DatabaseConfig` — IndexedDB database name, version, and schema definition.
 // - `DatabaseVersionConfig` — per-version migration descriptor for DB upgrades.
 
-export type { DatabaseConfig, DatabaseVersionConfig } from '../database';
+export type { DatabaseConfig, DatabaseVersionConfig, SchemaVersionResult } from '../database';
 
 // =============================================================================
 //  Data Operation Types
@@ -70,7 +70,11 @@ export type {
   SyncStatus,
   AuthMode,
   SingleUserConfig,
-  SingleUserGateType
+  SingleUserGateType,
+  SchemaDefinition,
+  SchemaTableConfig,
+  AuthConfig,
+  FieldType
 } from '../types';
 
 // =============================================================================
@@ -105,3 +109,10 @@ export type { Session } from '@supabase/supabase-js';
 // - `UserPresenceState` — per-user cursor/presence state for awareness.
 
 export type { CRDTConfig, UserPresenceState } from '../crdt/types';
+
+// =============================================================================
+//  SQL Generation Types
+// =============================================================================
+// - `SQLGenerationOptions` — options for controlling `generateSupabaseSQL()` output.
+
+export type { SQLGenerationOptions, TypeScriptGenerationOptions } from '../schema';

@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": [
     "src/entries/*.ts",
-    "src/supabase/validate.ts"
+    "src/supabase/validate.ts",
+    "src/bin/install-pwa.ts"
   ],
   "project": [
     "src/**/*.ts"

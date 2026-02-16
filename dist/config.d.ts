@@ -23,38 +23,67 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
-import type { SingleUserGateType } from './types';
+import type { SingleUserGateType, SchemaDefinition, AuthConfig } from './types';
 import type { CRDTConfig } from './crdt/types';
 import type { DemoConfig } from './demo';
 import { type DatabaseConfig } from './database';
 /**
  * Top-level configuration for the sync engine.
  *
- * Passed to {@link initEngine} at app startup. All fields except `tables`
- * and `prefix` have sensible defaults.
+ * Passed to {@link initEngine} at app startup. Supports two configuration modes:
+ *
+ * 1. **Schema-driven** (recommended) — Provide a `schema` object. The engine
+ *    auto-generates `tables`, Dexie stores, versioning, and database naming.
+ * 2. **Manual** (backward compat) — Provide explicit `tables` and `database`.
+ *
+ * The two modes are mutually exclusive (`schema` vs `tables` + `database`).
  *
  * @example
+ * // Schema-driven (new, recommended):
  * initEngine({
  *   prefix: 'myapp',
- *   tables: [
- *     { supabaseName: 'goals', columns: 'id,title,target,current_value,...' },
- *   ],
- *   database: { name: 'myapp-db', versions: [{ version: 1, stores: { goals: 'id,user_id' } }] },
- *   syncDebounceMs: 1000,
+ *   schema: {
+ *     goals: 'goal_list_id, order',
+ *     focus_settings: { singleton: true },
+ *   },
+ * });
+ *
+ * // Manual (backward compat):
+ * initEngine({
+ *   prefix: 'myapp',
+ *   tables: [...],
+ *   database: { name: 'myapp-db', versions: [...] },
  * });
  */
 export interface SyncEngineConfig {
-    /** Per-table sync configuration (required). */
+    /** Per-table sync configuration. Auto-populated when using `schema`. */
     tables: TableConfig[];
     /** Application prefix — used for localStorage keys, debug logging, etc. */
     prefix: string;
+    /**
+     * Declarative schema definition — replaces both `tables` and `database`.
+     *
+     * Each key is a Supabase table name (snake_case). Values are either a string
+     * of Dexie indexes or a {@link SchemaTableConfig} object for full control.
+     * Mutually exclusive with `tables` + `database`.
+     *
+     * @see {@link SchemaDefinition} for the full type definition
+     */
+    schema?: SchemaDefinition;
+    /**
+     * Override the auto-generated database name when using `schema`.
+     *
+     * By default, the database is named `${prefix}DB` (e.g., `stellarDB`).
+     * Use this to keep an existing database name for data continuity.
+     */
+    databaseName?: string;
     /** Provide a pre-created Dexie instance (backward compat). Mutually exclusive with `database`. */
     db?: Dexie;
     /** Provide a pre-created Supabase client (backward compat). Engine creates one internally if not provided. */
     supabase?: SupabaseClient;
     /** Engine creates and owns the Dexie instance when this is provided. */
     database?: DatabaseConfig;
-    /** Authentication configuration. */
+    /** Authentication configuration (nested/internal form). */
     auth?: {
         /** Single-user mode gate configuration. */
         singleUser?: {
@@ -112,9 +141,11 @@ export interface SyncEngineConfig {
      * CRDT document storage and allows use of the `@prabhask5/stellar-engine/crdt` API.
      * When omitted, no CRDT tables are created and CRDT imports will throw.
      *
+     * Pass `true` as shorthand for `{}` (all defaults).
+     *
      * @see {@link CRDTConfig} for available configuration options
      */
-    crdt?: CRDTConfig;
+    crdt?: CRDTConfig | true;
 }
 /**
  * Per-table sync configuration.
@@ -165,7 +196,21 @@ export interface TableConfig {
  *   database: { name: 'myapp-db', versions: [...] },
  * });
  */
-export declare function initEngine(config: SyncEngineConfig): void;
+/**
+ * Input type for {@link initEngine}.
+ *
+ * Differs from {@link SyncEngineConfig} in two ways:
+ * - `tables` is optional (auto-generated when `schema` is provided)
+ * - `auth` accepts either the flat {@link AuthConfig} or the nested internal form
+ *
+ * The flat auth form is detected by the absence of a `singleUser` key and is
+ * normalized to the nested structure before being stored on the config singleton.
+ */
+export type InitEngineInput = Omit<SyncEngineConfig, 'tables' | 'auth'> & {
+    tables?: TableConfig[];
+    auth?: AuthConfig | SyncEngineConfig['auth'];
+};
+export declare function initEngine(config: InitEngineInput): void;
 /**
  * Wait for the database to be fully opened and upgraded.
  *

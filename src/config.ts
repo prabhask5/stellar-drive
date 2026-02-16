@@ -24,7 +24,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
-import type { SingleUserGateType } from './types';
+import type { SingleUserGateType, SchemaDefinition, SchemaTableConfig, AuthConfig } from './types';
 import type { CRDTConfig } from './crdt/types';
 import type { DemoConfig } from './demo';
 import { _setDebugPrefix } from './debug';
@@ -32,7 +32,13 @@ import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
-import { createDatabase, _setManagedDb, type DatabaseConfig } from './database';
+import {
+  createDatabase,
+  _setManagedDb,
+  SYSTEM_INDEXES,
+  computeSchemaVersion,
+  type DatabaseConfig
+} from './database';
 import { _initCRDT } from './crdt/config';
 import { snakeToCamel } from './utils';
 
@@ -43,24 +49,55 @@ import { snakeToCamel } from './utils';
 /**
  * Top-level configuration for the sync engine.
  *
- * Passed to {@link initEngine} at app startup. All fields except `tables`
- * and `prefix` have sensible defaults.
+ * Passed to {@link initEngine} at app startup. Supports two configuration modes:
+ *
+ * 1. **Schema-driven** (recommended) — Provide a `schema` object. The engine
+ *    auto-generates `tables`, Dexie stores, versioning, and database naming.
+ * 2. **Manual** (backward compat) — Provide explicit `tables` and `database`.
+ *
+ * The two modes are mutually exclusive (`schema` vs `tables` + `database`).
  *
  * @example
+ * // Schema-driven (new, recommended):
  * initEngine({
  *   prefix: 'myapp',
- *   tables: [
- *     { supabaseName: 'goals', columns: 'id,title,target,current_value,...' },
- *   ],
- *   database: { name: 'myapp-db', versions: [{ version: 1, stores: { goals: 'id,user_id' } }] },
- *   syncDebounceMs: 1000,
+ *   schema: {
+ *     goals: 'goal_list_id, order',
+ *     focus_settings: { singleton: true },
+ *   },
+ * });
+ *
+ * // Manual (backward compat):
+ * initEngine({
+ *   prefix: 'myapp',
+ *   tables: [...],
+ *   database: { name: 'myapp-db', versions: [...] },
  * });
  */
 export interface SyncEngineConfig {
-  /** Per-table sync configuration (required). */
+  /** Per-table sync configuration. Auto-populated when using `schema`. */
   tables: TableConfig[];
   /** Application prefix — used for localStorage keys, debug logging, etc. */
   prefix: string;
+
+  /**
+   * Declarative schema definition — replaces both `tables` and `database`.
+   *
+   * Each key is a Supabase table name (snake_case). Values are either a string
+   * of Dexie indexes or a {@link SchemaTableConfig} object for full control.
+   * Mutually exclusive with `tables` + `database`.
+   *
+   * @see {@link SchemaDefinition} for the full type definition
+   */
+  schema?: SchemaDefinition;
+
+  /**
+   * Override the auto-generated database name when using `schema`.
+   *
+   * By default, the database is named `${prefix}DB` (e.g., `stellarDB`).
+   * Use this to keep an existing database name for data continuity.
+   */
+  databaseName?: string;
 
   /** Provide a pre-created Dexie instance (backward compat). Mutually exclusive with `database`. */
   db?: Dexie;
@@ -69,7 +106,7 @@ export interface SyncEngineConfig {
   /** Engine creates and owns the Dexie instance when this is provided. */
   database?: DatabaseConfig;
 
-  /** Authentication configuration. */
+  /** Authentication configuration (nested/internal form). */
   auth?: {
     /** Single-user mode gate configuration. */
     singleUser?: {
@@ -131,9 +168,11 @@ export interface SyncEngineConfig {
    * CRDT document storage and allows use of the `@prabhask5/stellar-engine/crdt` API.
    * When omitted, no CRDT tables are created and CRDT imports will throw.
    *
+   * Pass `true` as shorthand for `{}` (all defaults).
+   *
    * @see {@link CRDTConfig} for available configuration options
    */
-  crdt?: CRDTConfig;
+  crdt?: CRDTConfig | true;
 }
 
 /**
@@ -200,8 +239,59 @@ let _dbReady: Promise<void> | null = null;
  *   database: { name: 'myapp-db', versions: [...] },
  * });
  */
-export function initEngine(config: SyncEngineConfig): void {
-  engineConfig = config;
+/**
+ * Input type for {@link initEngine}.
+ *
+ * Differs from {@link SyncEngineConfig} in two ways:
+ * - `tables` is optional (auto-generated when `schema` is provided)
+ * - `auth` accepts either the flat {@link AuthConfig} or the nested internal form
+ *
+ * The flat auth form is detected by the absence of a `singleUser` key and is
+ * normalized to the nested structure before being stored on the config singleton.
+ */
+export type InitEngineInput = Omit<SyncEngineConfig, 'tables' | 'auth'> & {
+  tables?: TableConfig[];
+  auth?: AuthConfig | SyncEngineConfig['auth'];
+};
+
+export function initEngine(config: InitEngineInput): void {
+  /* Normalize `crdt: true` shorthand to `crdt: {}`. */
+  if (config.crdt === true) {
+    config.crdt = {};
+  }
+
+  /* Normalize flat auth config to the nested structure used internally. */
+  if (config.auth) {
+    config.auth = normalizeAuthConfig(config.auth);
+  }
+
+  /*
+   * Schema-driven mode: auto-generate `tables` and `database` from the
+   * declarative schema definition.
+   */
+  if (config.schema) {
+    if (config.tables || config.database) {
+      throw new Error(
+        'initEngine: `schema` is mutually exclusive with `tables` and `database`. ' +
+          'Use either the schema-driven API or the manual API, not both.'
+      );
+    }
+    config.tables = generateTablesFromSchema(config.schema);
+    config.database = generateDatabaseFromSchema(
+      config.schema,
+      config.prefix,
+      config.databaseName,
+      !!config.crdt
+    );
+  }
+
+  /* Validate that tables are configured (either manually or via schema). */
+  if (!config.tables || config.tables.length === 0) {
+    throw new Error('initEngine: No tables configured. Provide either `schema` or `tables`.');
+  }
+
+  /* At this point tables is guaranteed to be populated — safe to cast. */
+  engineConfig = config as SyncEngineConfig;
 
   /* Propagate prefix to all internal modules that use localStorage keys. */
   if (config.prefix) {
@@ -317,4 +407,274 @@ export function getTableColumns(supabaseName: string): string {
     throw new Error(`Table ${supabaseName} not found in engine config`);
   }
   return table.columns;
+}
+
+// =============================================================================
+// Schema → Config Generation
+// =============================================================================
+
+/**
+ * Generate `TableConfig[]` from a declarative {@link SchemaDefinition}.
+ *
+ * Each schema key becomes a `TableConfig` with:
+ * - `supabaseName` = the schema key (snake_case)
+ * - `columns` = `'*'` (SELECT all by default — no egress micro-optimization)
+ * - `ownershipFilter` = `'user_id'` (default, since RLS always filters by user)
+ * - `isSingleton`, `excludeFromConflict`, `numericMergeFields`, `onRemoteChange`
+ *   from the object form (if provided)
+ *
+ * @param schema - The declarative schema definition.
+ * @returns An array of `TableConfig` objects ready for engine consumption.
+ *
+ * @example
+ * generateTablesFromSchema({
+ *   goals: 'goal_list_id, order',
+ *   focus_settings: { singleton: true },
+ * });
+ * // → [
+ * //   { supabaseName: 'goals', columns: '*', ownershipFilter: 'user_id' },
+ * //   { supabaseName: 'focus_settings', columns: '*', ownershipFilter: 'user_id', isSingleton: true },
+ * // ]
+ */
+function generateTablesFromSchema(schema: SchemaDefinition): TableConfig[] {
+  const tables: TableConfig[] = [];
+
+  for (const [tableName, definition] of Object.entries(schema)) {
+    /* String form is sugar for { indexes: theString }. */
+    const config: SchemaTableConfig =
+      typeof definition === 'string' ? { indexes: definition } : definition;
+
+    const tableConfig: TableConfig = {
+      supabaseName: tableName,
+      columns: config.columns || '*',
+      ownershipFilter: config.ownership || 'user_id'
+    };
+
+    if (config.singleton) tableConfig.isSingleton = true;
+    if (config.excludeFromConflict) tableConfig.excludeFromConflict = config.excludeFromConflict;
+    if (config.numericMergeFields) tableConfig.numericMergeFields = config.numericMergeFields;
+    if (config.onRemoteChange) tableConfig.onRemoteChange = config.onRemoteChange;
+
+    tables.push(tableConfig);
+  }
+
+  return tables;
+}
+
+/**
+ * Generate a `DatabaseConfig` from a declarative {@link SchemaDefinition}.
+ *
+ * Builds the Dexie store schema for each table by combining the app-specific
+ * indexes from the schema with the {@link SYSTEM_INDEXES} constant. Uses
+ * {@link computeSchemaVersion} for automatic version management.
+ *
+ * @param schema - The declarative schema definition.
+ * @param prefix - Application prefix for database naming and versioning.
+ * @param databaseName - Optional override for the database name.
+ * @param crdtEnabled - Whether the CRDT subsystem is enabled.
+ * @returns A `DatabaseConfig` ready for `createDatabase()`.
+ *
+ * @example
+ * generateDatabaseFromSchema(
+ *   { goals: 'goal_list_id, order' },
+ *   'stellar',
+ *   undefined,
+ *   false
+ * );
+ * // → {
+ * //   name: 'stellarDB',
+ * //   versions: [{ version: 1, stores: { goals: 'id, user_id, ..., goal_list_id, order' } }]
+ * // }
+ */
+function generateDatabaseFromSchema(
+  schema: SchemaDefinition,
+  prefix: string,
+  databaseName?: string,
+  crdtEnabled = false
+): DatabaseConfig {
+  const stores: Record<string, string> = {};
+
+  for (const [tableName, definition] of Object.entries(schema)) {
+    const config: SchemaTableConfig =
+      typeof definition === 'string' ? { indexes: definition } : definition;
+
+    /* Determine the Dexie table name (camelCase by default, or explicit override). */
+    const dexieName = config.dexieName || snakeToCamel(tableName);
+
+    /* Merge system indexes with app-specific indexes. */
+    const appIndexes = (config.indexes || '').trim();
+    stores[dexieName] = appIndexes ? `${SYSTEM_INDEXES}, ${appIndexes}` : SYSTEM_INDEXES;
+  }
+
+  /* Compute auto-version based on the merged store schema.
+   * The CRDT flag affects the schema hash because CRDT system tables are merged
+   * by buildDexie() — if CRDT is toggled, the version should bump. */
+  const hashInput = crdtEnabled ? { ...stores, __crdt: 'enabled' } : stores;
+  const result = computeSchemaVersion(prefix, hashInput);
+
+  /*
+   * Build the versions array. When an upgrade is detected, declare BOTH
+   * the previous version and the current version so Dexie has a proper
+   * upgrade path (v(N-1) → vN). This avoids the UpgradeError that occurs
+   * when only the new version is declared and the browser already has the
+   * old version's IndexedDB schema.
+   *
+   * Dexie handles additive changes (new tables, new indexes) natively.
+   * For the previous version we use its original stores so Dexie can diff
+   * and apply the structural changes.
+   */
+  const versions: DatabaseConfig['versions'] = [];
+
+  if (result.previousStores && result.previousVersion) {
+    versions.push({ version: result.previousVersion, stores: result.previousStores });
+  }
+
+  /*
+   * Generate an upgrade callback when any table declares `renamedFrom`.
+   * The callback copies data from the old Dexie table to the new one,
+   * applying any `renamedColumns` transformations along the way.
+   */
+  const upgradeCallback = buildRenameUpgradeCallback(schema);
+
+  if (upgradeCallback) {
+    versions.push({ version: result.version, stores, upgrade: upgradeCallback });
+  } else {
+    versions.push({ version: result.version, stores });
+  }
+
+  return {
+    name: databaseName || `${prefix}DB`,
+    versions
+  };
+}
+
+/**
+ * Build a Dexie upgrade callback that handles table renames.
+ *
+ * When a table declares `renamedFrom`, the callback copies all rows from
+ * the old table name to the new one, applying any `renamedColumns` field
+ * name transformations. Dexie's schema diff handles creating the new table
+ * and removing the old one — this callback only handles data migration.
+ *
+ * @param schema - The declarative schema definition.
+ * @returns An upgrade function, or `null` if no renames are declared.
+ * @internal
+ */
+function buildRenameUpgradeCallback(
+  schema: SchemaDefinition
+): ((tx: import('dexie').Transaction) => Promise<void>) | null {
+  /* Collect all rename operations. */
+  const renames: {
+    oldDexie: string;
+    newDexie: string;
+    columnMap: Record<string, string> | undefined;
+  }[] = [];
+
+  for (const [tableName, definition] of Object.entries(schema)) {
+    const config: SchemaTableConfig =
+      typeof definition === 'string' ? { indexes: definition } : definition;
+
+    if (!config.renamedFrom) continue;
+
+    const oldDexie = config.dexieName ? config.dexieName : snakeToCamel(config.renamedFrom);
+    const newDexie = config.dexieName || snakeToCamel(tableName);
+
+    /* Only generate a callback if the Dexie name actually changed. */
+    if (oldDexie !== newDexie) {
+      renames.push({
+        oldDexie,
+        newDexie,
+        columnMap: config.renamedColumns
+      });
+    }
+  }
+
+  if (renames.length === 0) return null;
+
+  return async (tx: import('dexie').Transaction) => {
+    for (const { oldDexie, newDexie, columnMap } of renames) {
+      try {
+        const oldTable = tx.table(oldDexie);
+        const newTable = tx.table(newDexie);
+        const rows = await oldTable.toArray();
+
+        for (const row of rows) {
+          /* Apply column renames if specified. */
+          if (columnMap) {
+            for (const [newCol, oldCol] of Object.entries(columnMap)) {
+              if (oldCol in row) {
+                row[newCol] = row[oldCol];
+                delete row[oldCol];
+              }
+            }
+          }
+          await newTable.put(row);
+        }
+
+        /* Clear the old table — Dexie's schema diff will remove it. */
+        await oldTable.clear();
+      } catch {
+        /* Old table may not exist (e.g., fresh install) — skip silently. */
+      }
+    }
+  };
+}
+
+/**
+ * Normalize an auth config to the internal nested structure.
+ *
+ * Detects whether the config is in the new flat form ({@link AuthConfig}) or
+ * the legacy nested form (has a `singleUser` key). Flat form is converted to
+ * nested; nested form is passed through unchanged.
+ *
+ * @param auth - The auth config (flat or nested).
+ * @returns The normalized nested auth config.
+ * @internal
+ */
+function normalizeAuthConfig(auth: InitEngineInput['auth']): SyncEngineConfig['auth'] {
+  if (!auth) return auth;
+
+  /* Detect legacy nested form by the presence of `singleUser` key. */
+  if ('singleUser' in auth) {
+    return auth;
+  }
+
+  /* Flat form (AuthConfig) → convert to nested structure. */
+  const flat = auth as AuthConfig;
+  const nested: SyncEngineConfig['auth'] = {};
+
+  /* Map flat singleUser fields to nested singleUser object. */
+  const gateType = flat.gateType || 'code';
+  const codeLength = flat.codeLength || 6;
+  (nested as Record<string, unknown>).singleUser = {
+    gateType,
+    ...(gateType === 'code' ? { codeLength } : {})
+  };
+
+  /* Map flat boolean flags to nested object structures. */
+  const emailConfirmation = flat.emailConfirmation !== undefined ? flat.emailConfirmation : true;
+  (nested as Record<string, unknown>).emailConfirmation = { enabled: emailConfirmation };
+
+  const deviceVerification = flat.deviceVerification !== undefined ? flat.deviceVerification : true;
+  (nested as Record<string, unknown>).deviceVerification = {
+    enabled: deviceVerification,
+    trustDurationDays: flat.trustDurationDays || 90
+  };
+
+  /* Pass through remaining fields with defaults. */
+  (nested as Record<string, unknown>).confirmRedirectPath = flat.confirmRedirectPath || '/confirm';
+  (nested as Record<string, unknown>).enableOfflineAuth =
+    flat.enableOfflineAuth !== undefined ? flat.enableOfflineAuth : true;
+  if (flat.sessionValidationIntervalMs !== undefined) {
+    (nested as Record<string, unknown>).sessionValidationIntervalMs =
+      flat.sessionValidationIntervalMs;
+  }
+  if (flat.profileExtractor) {
+    (nested as Record<string, unknown>).profileExtractor = flat.profileExtractor;
+  }
+  if (flat.profileToMetadata) {
+    (nested as Record<string, unknown>).profileToMetadata = flat.profileToMetadata;
+  }
+
+  return nested;
 }

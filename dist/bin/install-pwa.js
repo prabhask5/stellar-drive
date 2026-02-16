@@ -1,25 +1,24 @@
-#!/usr/bin/env node
 /**
- * @fileoverview CLI script that scaffolds a PWA SvelteKit project using stellar-engine.
+ * @fileoverview CLI command that scaffolds a PWA SvelteKit project using stellar-engine.
  *
  * Generates a complete project structure including:
  *   - Build configuration (Vite, TypeScript, SvelteKit, ESLint, Prettier, Knip)
  *   - PWA assets (manifest, offline page, placeholder icons)
  *   - SvelteKit routes (home, login, setup wizard, profile, error, confirm)
  *   - API endpoints (config, deploy, validate)
- *   - Supabase database schema
+ *   - Shared schema definition (single source of truth for Dexie + SQL + types)
  *   - Git hooks via Husky
  *
  * Files are written non-destructively: existing files are skipped, not overwritten.
  *
- * Launches an interactive walkthrough when invoked as `stellar-engine install pwa`.
+ * Invoked via `stellar-engine install pwa` (routed by {@link commands.ts}).
  *
  * @example
  * ```bash
  * stellar-engine install pwa
  * ```
  *
- * @see {@link main} for the entry point
+ * @see {@link run} for the entry point
  * @see {@link runInteractiveSetup} for the interactive walkthrough
  * @see {@link writeIfMissing} for the non-destructive file write strategy
  */
@@ -249,7 +248,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [
     sveltekit(),
-    stellarPWA({ prefix: '${opts.prefix}', name: '${opts.name}' })
+    stellarPWA({ prefix: '${opts.prefix}', name: '${opts.name}', schema: true })
   ],
   build: {
     rollupOptions: {
@@ -917,6 +916,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 static/sw.js
 static/asset-manifest.json
+src/lib/types.generated.ts
 `;
 }
 // ---------------------------------------------------------------------------
@@ -1012,158 +1012,6 @@ function generateEmailPlaceholder(title) {
 <html><head><title>${title}</title></head>
 <body><p>TODO: Implement ${title} email template</p></body>
 </html>
-`;
-}
-// ---------------------------------------------------------------------------
-//                  SUPABASE SCHEMA GENERATOR
-// ---------------------------------------------------------------------------
-/**
- * Generate the Supabase database schema SQL including helper functions,
- * the `trusted_devices` table, and commented-out example table patterns.
- *
- * @param opts - The install options containing `name`.
- * @returns The SQL source for `supabase-schema.sql`.
- */
-function generateSupabaseSchema(opts) {
-    return `-- ${opts.name} Database Schema for Supabase
--- Copy and paste this entire file into your Supabase SQL Editor
-
--- ============================================================
--- EXTENSIONS
--- ============================================================
-
-create extension if not exists "uuid-ossp";
-
--- ============================================================
--- HELPER FUNCTIONS
--- ============================================================
-
--- Function to automatically set user_id on insert
-create or replace function set_user_id()
-returns trigger as $$
-begin
-  new.user_id := auth.uid();
-  return new;
-end;
-$$ language plpgsql security definer set search_path = '';
-
--- Function to automatically update updated_at timestamp
-create or replace function update_updated_at_column()
-returns trigger as $$
-begin
-  new.updated_at = timezone('utc'::text, now());
-  return new;
-end;
-$$ language plpgsql set search_path = '';
-
--- ============================================================
--- YOUR TABLES HERE
--- ============================================================
--- Example table showing the required column pattern:
---
--- create table items (
---   id uuid default uuid_generate_v4() primary key,
---   user_id uuid references auth.users(id) on delete cascade,
---   name text not null,
---   completed boolean default false not null,
---   "order" double precision default 0 not null,
---   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
---   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
---   deleted boolean default false not null,
---   _version integer default 1 not null,
---   device_id text
--- );
---
--- alter table items enable row level security;
--- create policy "Users can manage own items" on items for all using (auth.uid() = user_id);
---
--- create trigger set_user_id_items before insert on items for each row execute function set_user_id();
--- create trigger update_items_updated_at before update on items for each row execute function update_updated_at_column();
---
--- create index idx_items_user_id on items(user_id);
--- create index idx_items_order on items("order");
--- create index idx_items_updated_at on items(updated_at);
--- create index idx_items_deleted on items(deleted) where deleted = false;
-
--- ============================================================
--- TRUSTED DEVICES (required for device verification)
--- ============================================================
-
-create table trusted_devices (
-  id uuid default gen_random_uuid() primary key,
-  user_id uuid references auth.users(id) on delete cascade not null,
-  device_id text not null,
-  device_label text,
-  trusted_at timestamptz default now() not null,
-  last_used_at timestamptz default now() not null,
-  unique(user_id, device_id)
-);
-
-alter table trusted_devices enable row level security;
-create policy "Users can manage own devices" on trusted_devices for all using (auth.uid() = user_id);
-
-create trigger set_user_id_trusted_devices before insert on trusted_devices for each row execute function set_user_id();
-create trigger update_trusted_devices_updated_at before update on trusted_devices for each row execute function update_updated_at_column();
-
-create index idx_trusted_devices_user_id on trusted_devices(user_id);
-
--- ============================================================
--- REALTIME: Enable real-time subscriptions for all tables
--- ============================================================
--- Enable realtime for your tables:
--- alter publication supabase_realtime add table items;
-
-alter publication supabase_realtime add table trusted_devices;
-
--- ============================================================
--- CRDT DOCUMENT STORAGE (optional — only needed for collaborative editing)
--- ============================================================
--- Stores Yjs CRDT document state for collaborative real-time editing.
--- Each row represents the latest merged state of a single collaborative document.
--- The engine persists full Yjs binary state periodically (every ~30s), not per keystroke.
--- Real-time updates between clients are distributed via Supabase Broadcast (WebSocket),
--- so this table is only for durable persistence and offline-to-online reconciliation.
---
--- Key columns:
---   state        — Full Yjs document state (Y.encodeStateAsUpdate), base64 encoded
---   state_vector — Yjs state vector (Y.encodeStateVector) for efficient delta computation
---   state_size   — Byte size of state column, used for monitoring and compaction decisions
---   device_id    — Identifies which device last persisted, used for echo suppression
---
--- To enable: add \`crdt: {}\` to your initEngine() config.
--- To skip: delete or comment out this section if you don't need collaborative editing.
-
-create table crdt_documents (
-  id uuid primary key default gen_random_uuid(),
-  page_id uuid not null,
-  state text not null,
-  state_vector text not null,
-  state_size integer not null default 0,
-  user_id uuid not null references auth.users(id),
-  device_id text not null,
-  updated_at timestamptz not null default now(),
-  created_at timestamptz not null default now()
-);
-
-alter table crdt_documents enable row level security;
-
-create policy "Users can manage own CRDT documents"
-  on crdt_documents for all
-  using (auth.uid() = user_id);
-
-create trigger set_crdt_documents_user_id
-  before insert on crdt_documents
-  for each row execute function set_user_id();
-
-create trigger update_crdt_documents_updated_at
-  before update on crdt_documents
-  for each row execute function update_updated_at_column();
-
-create index idx_crdt_documents_page_id on crdt_documents(page_id);
-create index idx_crdt_documents_user_id on crdt_documents(user_id);
-
--- Unique constraint per page per user (upsert target for persistence)
-create unique index idx_crdt_documents_page_user on crdt_documents(page_id, user_id);
 `;
 }
 // ---------------------------------------------------------------------------
@@ -1349,6 +1197,7 @@ import { initEngine, startSyncEngine, supabase } from '@prabhask5/stellar-engine
 import { initConfig } from '@prabhask5/stellar-engine/config';
 import { resolveAuthState, lockSingleUser } from '@prabhask5/stellar-engine/auth';
 import { resolveRootLayout } from '@prabhask5/stellar-engine/kit';
+import { schema } from '$lib/schema';
 import { demoConfig } from '$lib/demo/config';
 import type { AuthMode, OfflineCredentials, Session } from '@prabhask5/stellar-engine/types';
 import type { LayoutLoad } from './$types';
@@ -1366,30 +1215,28 @@ export const prerender = false;
 //                          ENGINE BOOTSTRAP
 // =============================================================================
 
-// TODO: Configure initEngine() with your app-specific database schema.
-// Call initEngine({...}) at module scope (guarded by \`if (browser)\`).
-// See the stellar-engine documentation for the full config interface.
-//
-// Example:
-// if (browser) {
-//   initEngine({
-//     tables: [
-//       { supabaseName: 'items', columns: 'id,user_id,name,...' }
-//     ],
-//     database: {
-//       name: '${opts.name.replace(/[^a-zA-Z0-9]/g, '')}DB',
-//       versions: [
-//         { version: 1, stores: { items: 'id, user_id, created_at, updated_at' } }
-//       ]
-//     },
-//     supabase,
-//     prefix: '${opts.prefix}',
-//     auth: { singleUser: { gateType: 'code', codeLength: 6 } },
-//     demo: demoConfig,
-//     onAuthStateChange: (event, session) => { /* handle auth events */ },
-//     onAuthKicked: async () => { await lockSingleUser(); goto('/login'); }
-//   });
-// }
+/**
+ * Initialize the sync engine at module scope (runs once on first navigation).
+ * The schema in $lib/schema.ts is the single source of truth — it drives:
+ *   - Dexie (IndexedDB) stores and versioning
+ *   - TypeScript types auto-generated at src/lib/types.generated.ts
+ *   - Supabase schema auto-migrated during \`npm run dev\`
+ */
+if (browser) {
+  initEngine({
+    prefix: '${opts.prefix}',
+    schema,
+    auth: { gateType: 'code' },
+    demo: demoConfig,
+    onAuthStateChange: (event, session) => {
+      // TODO: Handle auth events (e.g., analytics, logging)
+    },
+    onAuthKicked: async () => {
+      await lockSingleUser();
+      goto('/login');
+    }
+  });
+}
 
 // =============================================================================
 //                           LAYOUT DATA TYPE
@@ -4490,6 +4337,78 @@ export const demoConfig: DemoConfig = {
 };
 `;
 }
+/**
+ * Generate the shared schema definition file.
+ *
+ * This is the single source of truth for the app's database schema:
+ *   - `initEngine({ schema })` reads it at runtime for Dexie stores
+ *   - The Vite plugin auto-generates TypeScript types on save
+ *   - The Vite plugin auto-migrates Supabase when .env has SUPABASE_SERVICE_ROLE_KEY
+ *
+ * @returns The TypeScript source for `src/lib/schema.ts`.
+ */
+function generateSchemaFile(_opts) {
+    return `/**
+ * @fileoverview Schema definition — single source of truth.
+ *
+ * Edit this file and save. During \`npm run dev\`:
+ *   - TypeScript types auto-generate at src/lib/types.generated.ts
+ *   - Supabase schema auto-migrates (when .env has SUPABASE_SERVICE_ROLE_KEY)
+ *   - Dexie (IndexedDB) auto-upgrades on next page load
+ *
+ * Each key is a Supabase table name (snake_case). Values are either:
+ *   - A string of Dexie indexes (system indexes are auto-appended)
+ *   - An object with full config (indexes, singleton, fields, etc.)
+ *
+ * @see https://github.com/nicekiwi/stellar-engine for documentation
+ */
+
+import type { SchemaDefinition } from '@prabhask5/stellar-engine/types';
+
+/**
+ * App schema — add your tables here.
+ *
+ * Examples:
+ *   items: 'category_id, order'
+ *   settings: { singleton: true }
+ *   tasks: {
+ *     indexes: 'project_id, order',
+ *     fields: {
+ *       title: 'string',
+ *       completed: 'boolean',
+ *       project_id: 'uuid',
+ *       order: 'number',
+ *     },
+ *   }
+ */
+export const schema: SchemaDefinition = {
+  // TODO: Add your tables here
+  // example_items: 'order',
+};
+`;
+}
+/**
+ * Generate the `.env` file with placeholder Supabase credentials.
+ *
+ * @returns The `.env` file content with commented placeholders.
+ */
+function generateEnvFile() {
+    return `PUBLIC_SUPABASE_URL=         # Your Supabase project URL
+PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=   # Supabase anon/public key
+SUPABASE_SERVICE_ROLE_KEY=   # Supabase service role key (enables auto-migration)
+`;
+}
+/**
+ * Generate the initial `types.generated.ts` placeholder so imports don't
+ * break before the first dev server run auto-generates the real file.
+ *
+ * @returns The TypeScript source for `src/lib/types.generated.ts`.
+ */
+function generateTypesPlaceholder() {
+    return `/** AUTO-GENERATED by stellar-engine — do not edit manually. */
+// Run \`npm run dev\` to auto-generate types from src/lib/schema.ts
+`;
+}
 function generateAppTypes() {
     return `/**
  * @fileoverview Type barrel — re-exports from stellar-engine plus app-specific types.
@@ -4503,46 +4422,6 @@ export type { SyncStatus, AuthMode, OfflineCredentials } from '@prabhask5/stella
 
 // TODO: Add app-specific type definitions below
 `;
-}
-// =============================================================================
-//                           COMMAND ROUTING
-// =============================================================================
-/**
- * Available CLI commands. Add new entries here to register additional commands.
- */
-const COMMANDS = [
-    {
-        name: 'install pwa',
-        usage: 'stellar-engine install pwa',
-        description: 'Scaffold a complete offline-first SvelteKit PWA project'
-    }
-];
-/**
- * Print the help screen listing all available commands.
- */
-function printHelp() {
-    p.intro(color.bold('\u2726 stellar-engine CLI'));
-    const commandList = COMMANDS.map((cmd) => `${color.cyan(cmd.usage)}\n${color.dim(cmd.description)}`).join('\n\n');
-    p.note(commandList, 'Available commands');
-    p.outro('Run a command to get started.');
-}
-/**
- * Route CLI arguments to the appropriate command handler.
- * Prints help and exits if the command is not recognised.
- */
-function routeCommand() {
-    const args = process.argv.slice(2);
-    const command = args.slice(0, 2).join(' ');
-    if (command === 'install pwa') {
-        main().catch((err) => {
-            console.error('Error:', err);
-            process.exit(1);
-        });
-        return;
-    }
-    /* Unrecognised command or no args — show help */
-    printHelp();
-    process.exit(args.length === 0 ? 0 : 1);
 }
 // =============================================================================
 //                              MAIN FUNCTION
@@ -4585,7 +4464,7 @@ function writeGroup(entries, cwd, createdFiles, skippedFiles, label, spinner, ru
  *
  * @throws {Error} If `npm install` or `npx husky init` fails.
  */
-async function main() {
+export async function run() {
     const opts = await runInteractiveSetup();
     const cwd = process.cwd();
     const createdFiles = [];
@@ -4614,7 +4493,8 @@ async function main() {
                 ['.prettierrc', generatePrettierrc()],
                 ['.prettierignore', generatePrettierignore()],
                 ['knip.json', generateKnipJson()],
-                ['.gitignore', generateGitignore()]
+                ['.gitignore', generateGitignore()],
+                ['.env', generateEnvFile()]
             ]
         },
         {
@@ -4639,8 +4519,7 @@ async function main() {
                 ['static/icons/apple-touch.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
                 ['static/change-email.html', generateEmailPlaceholder('Change Email')],
                 ['static/device-verification-email.html', generateEmailPlaceholder('Device Verification')],
-                ['static/signup-email.html', generateEmailPlaceholder('Signup Email')],
-                ['supabase-schema.sql', generateSupabaseSchema(opts)]
+                ['static/signup-email.html', generateEmailPlaceholder('Signup Email')]
             ]
         },
         {
@@ -4675,6 +4554,8 @@ async function main() {
         {
             label: 'Library & components',
             entries: [
+                ['src/lib/schema.ts', generateSchemaFile(opts)],
+                ['src/lib/types.generated.ts', generateTypesPlaceholder()],
                 ['src/lib/types.ts', generateAppTypes()],
                 ['src/lib/components/UpdatePrompt.svelte', generateUpdatePromptComponent()],
                 ['src/lib/demo/mockData.ts', generateDemoMockData()],
@@ -4703,15 +4584,11 @@ async function main() {
     ].join('\n'), 'Setup complete!');
     p.log.step([
         color.bold('Next steps:'),
-        '  1. Set up Supabase and add .env with your keys',
-        '  2. Run supabase-schema.sql in Supabase SQL Editor',
-        '  3. Add app icons in static/icons/',
-        `  4. Start building: ${color.cyan('npm run dev')}`
+        `  1. Add your Supabase credentials to ${color.cyan('.env')}`,
+        `  2. Define your tables in ${color.cyan('src/lib/schema.ts')}`,
+        `  3. Run ${color.cyan('npm run dev')} \u2014 types and Supabase schema update automatically`,
+        '  4. Add app icons in static/icons/'
     ].join('\n'));
     p.outro('Happy building!');
 }
-// =============================================================================
-//                                 RUN
-// =============================================================================
-routeCommand();
 //# sourceMappingURL=install-pwa.js.map

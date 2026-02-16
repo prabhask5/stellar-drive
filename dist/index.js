@@ -42,6 +42,7 @@ export { initEngine } from './config';
 // - `getDb` — returns a typed handle to the open database instance.
 // - `resetDatabase` — deletes and re-creates the local database (destructive).
 export { getDb, resetDatabase } from './database';
+export { SYSTEM_INDEXES, computeSchemaVersion } from './database';
 // =============================================================================
 //  Engine Lifecycle
 // =============================================================================
@@ -207,6 +208,12 @@ export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './ac
 // - `cleanupDemoDatabase` — deletes the demo database entirely.
 // - `DemoConfig` — configuration interface for demo mode.
 export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConfig } from './demo';
+// =============================================================================
+//  SQL Generation
+// =============================================================================
+// Generate complete Supabase SQL from a declarative schema definition.
+// These are also available via `@prabhask5/stellar-engine/utils`.
+export { generateSupabaseSQL, inferColumnType, generateMigrationSQL, generateTypeScript } from './schema';
 // =============================================================================
 //  Supabase Credential Validation (Server-Side)
 // =============================================================================
