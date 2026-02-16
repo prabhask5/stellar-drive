@@ -411,8 +411,20 @@ export function generateTypeScript(
       const { tsType, enumDef } = mapFieldToTS(fieldType, enumTypeName);
 
       if (enumDef) {
-        /* Deduplicate enums by name. */
-        if (!enums.some((e) => e.name === enumDef.name)) {
+        /* Deduplicate enums by name; warn on value mismatch. */
+        const existing = enums.find((e) => e.name === enumDef.name);
+        if (existing) {
+          const oldValues = JSON.stringify(existing.values);
+          const newValues = JSON.stringify(enumDef.values);
+          if (oldValues !== newValues) {
+            console.warn(
+              `[stellar-drive] Enum name collision: "${enumDef.name}" is defined with different values.\n` +
+                `  First:  ${oldValues}\n` +
+                `  Second: ${newValues} (in ${tableName}.${fieldName})\n` +
+                `  The first definition wins. Use "enumName" in the field config to disambiguate.`
+            );
+          }
+        } else {
           enums.push(enumDef);
         }
       }

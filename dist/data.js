@@ -69,9 +69,10 @@ function getDexieTableName(supabaseName) {
  * After the transaction commits, it marks the entity as modified (for reactive
  * UI updates) and schedules a sync push to propagate the change to Supabase.
  *
- * The caller is responsible for providing all required fields (including
- * timestamps like `created_at` and `updated_at`). If `data.id` is omitted,
- * a new UUID is generated automatically.
+ * Timestamps `created_at` and `updated_at` are auto-set to the current time
+ * if not provided. If `data.id` is omitted, a new UUID is generated
+ * automatically. Callers can override any auto-set field by providing it
+ * explicitly in `data`.
  *
  * @param table - The Supabase table name (resolved internally to a Dexie table).
  * @param data  - The full entity payload. May include `id`; if absent, one is generated.
@@ -97,7 +98,13 @@ export async function engineCreate(table, data) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
     const entityId = data.id || generateId();
-    const payload = { ...data, id: entityId };
+    const timestamp = now();
+    const payload = {
+        created_at: timestamp,
+        updated_at: timestamp,
+        ...data,
+        id: entityId
+    };
     /* The queue stores `id` as a separate column, so we strip it from the payload
        to avoid duplicating it in the serialized operation data. */
     const { id: _id, ...queuePayload } = payload;
@@ -248,7 +255,12 @@ export async function engineBatchWrite(operations) {
             switch (op.type) {
                 case 'create': {
                     const entityId = op.data.id || generateId();
-                    const payload = { ...op.data, id: entityId };
+                    const payload = {
+                        created_at: timestamp,
+                        updated_at: timestamp,
+                        ...op.data,
+                        id: entityId
+                    };
                     const { id: _id, ...queuePayload } = payload;
                     await db.table(dexieTable).add(payload);
                     await queueCreateOperation(op.table, entityId, queuePayload);

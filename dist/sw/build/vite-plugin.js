@@ -263,10 +263,10 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
             mkdirSync(typesDir, { recursive: true });
         }
         writeFileSync(typesAbsPath, tsContent, 'utf-8');
-        console.log(`[stellar] Types updated at ${relTypesPath}`);
+        console.log(`[stellar-drive] Types updated at ${relTypesPath}`);
     }
     else {
-        console.log(`[stellar] Types unchanged at ${relTypesPath}`);
+        console.log(`[stellar-drive] Types unchanged at ${relTypesPath}`);
     }
     /* 2. Load the previous schema snapshot for migration diffing. */
     const snapshot = loadSnapshot(projectRoot);
@@ -280,15 +280,15 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
         if (oldJson !== newJson) {
             const migrationSQL = generateMigrationSQL(snapshot, cleanedSchema);
             if (migrationSQL) {
-                console.log(`[stellar] Migration SQL:\n${migrationSQL}`);
+                console.log(`[stellar-drive] Migration SQL:\n${migrationSQL}`);
                 await pushMigration(migrationSQL, schemaOpts, projectRoot);
             }
             else {
-                console.log('[stellar] Schema changed but no migration SQL needed');
+                console.log('[stellar-drive] Schema changed but no migration SQL needed');
             }
         }
         else {
-            console.log('[stellar] Schema unchanged, no migration needed');
+            console.log('[stellar-drive] Schema unchanged, no migration needed');
         }
     }
     else if (!snapshot && schemaOpts.autoMigrate) {
@@ -305,15 +305,15 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
                 appName,
                 includeHelperFunctions: true
             });
-            console.log(`[stellar] Initial schema SQL:\n${fullSQL}`);
+            console.log(`[stellar-drive] Initial schema SQL:\n${fullSQL}`);
             await pushMigration(fullSQL, schemaOpts, projectRoot);
         }
         else {
-            console.log('[stellar] No tables in schema, skipping initial SQL generation');
+            console.log('[stellar-drive] No tables in schema, skipping initial SQL generation');
         }
     }
     else if (!schemaOpts.autoMigrate) {
-        console.log('[stellar] Auto-migrate disabled, skipping schema sync');
+        console.log('[stellar-drive] Auto-migrate disabled, skipping schema sync');
     }
     /* 3. Save the new snapshot (strip functions before serialization). */
     saveSnapshot(projectRoot, schema);
@@ -339,7 +339,7 @@ async function pushMigration(sql, opts, root) {
         if (!serviceRoleKey)
             missing.push('SUPABASE_SERVICE_ROLE_KEY');
         const relTypes = relative(root, resolve(opts.typesOutput));
-        console.warn(`[stellar] \u26a0 Supabase auto-migration skipped \u2014 missing env vars:\n` +
+        console.warn(`[stellar-drive] \u26a0 Supabase auto-migration skipped \u2014 missing env vars:\n` +
             missing.map((v) => `  ${v}`).join('\n') +
             `\n  Set these in .env to enable automatic schema sync.\n` +
             `  Types were still generated at ${relTypes}`);
@@ -350,14 +350,14 @@ async function pushMigration(sql, opts, root) {
         const supabase = createClient(supabaseUrl, serviceRoleKey);
         const { error } = await supabase.rpc('stellar_engine_migrate', { sql_text: sql });
         if (error) {
-            console.error(`[stellar] \u274c Migration failed: ${error.message}`);
+            console.error(`[stellar-drive] \u274c Migration failed: ${error.message}`);
         }
         else {
-            console.log('[stellar] \u2705 Schema migrated successfully');
+            console.log('[stellar-drive] \u2705 Schema migrated successfully');
         }
     }
     catch (err) {
-        console.error('[stellar] \u274c Migration RPC error:', err);
+        console.error('[stellar-drive] \u274c Migration RPC error:', err);
     }
 }
 // =============================================================================
@@ -405,6 +405,7 @@ export function stellarPWA(config) {
         name: 'stellar-pwa',
         /* ── buildStart — generate sw.js + one-shot schema processing ── */
         async buildStart() {
+            console.log(`[stellar-drive] buildStart — ${config.name} (prefix: ${config.prefix})`);
             /* ---- Service Worker Generation ---- */
             /* Generate a unique version stamp using base-36 timestamp */
             const version = Date.now().toString(36);
@@ -424,34 +425,42 @@ export function stellarPWA(config) {
             }
             const swPath = resolve('static/sw.js');
             writeFileSync(swPath, swContent);
-            console.log(`[stellar-pwa] Generated sw.js (version: ${version})`);
+            console.log(`[stellar-drive] Generated sw.js (version: ${version})`);
             /* ---- Schema Processing (production builds only) ---- */
             /*
              * Skip if schema is not enabled, or if configureServer already ran
              * (dev mode handles schema via ssrLoadModule + file watcher instead).
              */
-            if (!config.schema || isDevServer)
+            if (!config.schema) {
+                console.log('[stellar-drive] Schema auto-generation: disabled (pass `schema: true` to enable)');
                 return;
+            }
+            if (isDevServer) {
+                console.log('[stellar-drive] Schema processing deferred to dev server (configureServer)');
+                return;
+            }
             const schemaOpts = resolveSchemaOpts(config.schema);
             const projectRoot = resolve('.');
             const schemaAbsPath = resolve(schemaOpts.path);
+            console.log(`[stellar-drive] Schema processing — loading ${schemaOpts.path}`);
             try {
                 const schema = await loadSchemaFromFile(schemaAbsPath);
                 if (!schema || typeof schema !== 'object') {
-                    console.warn('[stellar] Schema file does not export a `schema` object — skipping.');
+                    console.warn('[stellar-drive] Schema file does not export a `schema` object — skipping.');
                     return;
                 }
                 await processLoadedSchema(schema, config.name, schemaOpts, projectRoot);
             }
             catch (err) {
-                console.error('[stellar] Error processing schema during build:', err);
+                console.error('[stellar-drive] Error processing schema during build:', err);
             }
         },
         /* ── closeBundle — generate asset manifest ───────────────────── */
         closeBundle() {
+            console.log('[stellar-drive] closeBundle — generating asset manifest');
             const buildDir = resolve('.svelte-kit/output/client/_app/immutable');
             if (!existsSync(buildDir)) {
-                console.warn('[stellar-pwa] Build directory not found, skipping manifest generation');
+                console.warn('[stellar-drive] Build directory not found, skipping manifest generation');
                 return;
             }
             try {
@@ -476,38 +485,61 @@ export function stellarPWA(config) {
                  * directory for it to be served from the production build. */
                 const buildOutputPath = resolve('.svelte-kit/output/client/asset-manifest.json');
                 writeFileSync(buildOutputPath, manifestContent);
-                console.log(`[stellar-pwa] Generated asset manifest with ${assets.length} files`);
+                console.log(`[stellar-drive] Generated asset manifest with ${assets.length} files`);
             }
             catch (e) {
-                console.warn('[stellar-pwa] Could not generate asset manifest:', e);
+                console.warn('[stellar-drive] Could not generate asset manifest:', e);
             }
         },
         /* ── configureServer — schema watching + auto-migration ──────── */
         configureServer(server) {
             /* Mark as dev server so buildStart skips schema processing. */
             isDevServer = true;
-            if (!config.schema)
+            if (!config.schema) {
+                console.log('[stellar-drive] Dev server started — schema auto-generation: disabled');
                 return;
+            }
             const schemaOpts = resolveSchemaOpts(config.schema);
             const projectRoot = resolve('.');
             const schemaAbsPath = resolve(schemaOpts.path);
+            console.log(`[stellar-drive] Dev server started — watching ${schemaOpts.path} for schema changes`);
+            /*
+             * Mutex flag to prevent concurrent processSchema executions.
+             * Without this, the initial call + a rapid file change could overlap,
+             * causing duplicate migration pushes or snapshot race conditions.
+             */
+            let processing = false;
+            let pendingReprocess = false;
             /**
              * Process the schema file using Vite's SSR module loader.
              * This gives us the live, transpiled module without needing
              * esbuild or any external transpiler.
              */
             async function processSchema() {
+                if (processing) {
+                    pendingReprocess = true;
+                    return;
+                }
+                processing = true;
                 try {
                     const mod = await server.ssrLoadModule(schemaAbsPath);
                     const schema = mod.schema;
                     if (!schema || typeof schema !== 'object') {
-                        console.warn('[stellar] Schema file does not export a `schema` object — skipping.');
+                        console.warn('[stellar-drive] Schema file does not export a `schema` object — skipping.');
                         return;
                     }
                     await processLoadedSchema(schema, config.name, schemaOpts, projectRoot);
                 }
                 catch (err) {
-                    console.error('[stellar] Error processing schema:', err);
+                    console.error('[stellar-drive] Error processing schema:', err);
+                }
+                finally {
+                    processing = false;
+                    /* If a change came in while we were processing, run again. */
+                    if (pendingReprocess) {
+                        pendingReprocess = false;
+                        processSchema();
+                    }
                 }
             }
             /* Run processSchema() once on dev server start. */
