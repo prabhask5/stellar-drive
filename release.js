@@ -72,6 +72,18 @@ pkg.version = newVersion;
 writeJSON(PKG_PATH, pkg);
 console.log(`  Updated package.json`);
 
+// 1b. Update stellar-drive version in install-pwa.ts generated package.json
+const INSTALL_PWA_PATH = resolve(__dirname, 'src/bin/install-pwa.ts');
+const installPwaSrc = readFileSync(INSTALL_PWA_PATH, 'utf-8');
+const updatedInstallPwa = installPwaSrc.replace(
+  /'stellar-drive': '\^[^']+'/,
+  `'stellar-drive': '^${newVersion}'`
+);
+if (updatedInstallPwa !== installPwaSrc) {
+  writeFileSync(INSTALL_PWA_PATH, updatedInstallPwa);
+  console.log(`  Updated stellar-drive version in install-pwa.ts`);
+}
+
 // 2. Validate
 console.log(`\n  Running validate...`);
 try {
@@ -112,7 +124,7 @@ try {
 // 5. Git commit, tag, and push
 console.log(`\n  Committing and pushing...`);
 try {
-  run(`git add package.json`);
+  run(`git add package.json src/bin/install-pwa.ts`);
   run(`git commit -m "v${newVersion}"`);
   run(`git tag v${newVersion}`);
   run(`git push && git push --tags`);

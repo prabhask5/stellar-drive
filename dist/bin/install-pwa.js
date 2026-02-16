@@ -205,7 +205,7 @@ function generatePackageJson(opts) {
             vite: '^6.0.0'
         },
         dependencies: {
-            'stellar-drive': '^1.1.6'
+            'stellar-drive': '^1.0.1'
         },
         type: 'module'
     }, null, 2) + '\n');
