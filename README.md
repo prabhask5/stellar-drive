@@ -317,14 +317,14 @@ const diagnostics = await getDiagnostics();
 |---|---|---|
 | `PUBLIC_SUPABASE_URL` | Yes | Supabase project URL. Find it: Dashboard > Settings > API > Project URL. |
 | `PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key. Find it: Dashboard > Settings > API > Project API keys > anon public. |
-| `SUPABASE_SERVICE_ROLE_KEY` | For auto-migration | Service role key (full RLS bypass). Used by the Vite plugin to push schema migrations. If not set, migrations are skipped and types are still generated. Find it: Dashboard > Settings > API > Project API keys > service_role. |
+| `DATABASE_URL` | For auto-migration | Postgres connection string. Used by the Vite plugin to push schema migrations directly to Postgres. If not set, migrations are skipped and types are still generated. Find it: Dashboard > Settings > Database > Connection string (URI). |
 
 ## Schema workflow
 
 The schema-driven workflow lets you declare your database schema once in `src/lib/schema.ts` and have three systems stay in sync automatically:
 
 1. **TypeScript interfaces** -- auto-generated at `src/lib/types.generated.ts`
-2. **Supabase DDL** -- auto-migrated via the `stellar_engine_migrate` RPC function
+2. **Supabase DDL** -- auto-migrated via direct Postgres connection
 3. **IndexedDB/Dexie** -- auto-versioned at runtime by `initEngine()`
 
 ### How it works
@@ -349,12 +349,12 @@ Each processing cycle:
 1. Generates TypeScript interfaces from schema field definitions
 2. Loads the previous schema snapshot from `.stellar/schema-snapshot.json`
 3. Diffs old vs new schema to produce `ALTER TABLE` migration SQL
-4. Pushes migration SQL to Supabase via `stellar_engine_migrate` RPC (requires `SUPABASE_SERVICE_ROLE_KEY`)
-5. Saves the updated snapshot
+4. Pushes migration SQL to Supabase via direct Postgres connection (requires `DATABASE_URL`)
+5. Saves the updated snapshot (only on success -- failed migrations are retried on the next build)
 
-On first run (no snapshot), the plugin generates full `CREATE TABLE` SQL with RLS policies, triggers, and indexes.
+On first run (no snapshot), the plugin generates idempotent initial SQL (`CREATE TABLE IF NOT EXISTS`) with RLS policies, triggers, and indexes. This works on both fresh databases and databases with existing tables -- no manual SQL is ever needed.
 
-If `SUPABASE_SERVICE_ROLE_KEY` is not set, types are still generated but migration push is skipped with a warning.
+If `DATABASE_URL` is not set, types are still generated but migration push is skipped with a warning.
 
 ### Deploying to Vercel (or any CI/CD)
 
@@ -366,18 +366,18 @@ The schema migration runs automatically during every `vite build`. To enable it 
    |---|---|---|
    | `PUBLIC_SUPABASE_URL` | Plain | Yes -- client auth + data access |
    | `PUBLIC_SUPABASE_ANON_KEY` | Plain | Yes -- client auth + data access |
-   | `SUPABASE_SERVICE_ROLE_KEY` | Secret | Yes -- auto-migration during build |
+   | `DATABASE_URL` | Secret | Yes -- auto-migration during build |
 
-2. **Commit `.stellar/schema-snapshot.json`** to git. This file tracks the last-known schema state. Without it, every build is treated as a first run (full initial SQL). The snapshot is updated locally when you run `dev` or `build` and should be committed alongside schema changes.
+2. **Commit `.stellar/schema-snapshot.json`** to git. This file tracks the last-known schema state. Without it, every build is treated as a first run (full idempotent SQL). The snapshot is updated locally when you run `dev` or `build` and should be committed alongside schema changes.
 
-3. **The `stellar_engine_migrate` RPC function must exist** in your Supabase database. It's created automatically on first dev run or first build with the service role key set. If you're migrating an existing database that was set up before this workflow, run the initial SQL from your first build output in the Supabase SQL Editor, or run `npm run dev` locally with all env vars set.
+3. **Install the `postgres` npm package** -- `npm install postgres`. This is the Postgres client used by the Vite plugin for direct SQL execution.
 
 **How it works on each deploy:**
-- The Vite plugin's `buildStart` hook loads your schema, diffs against the committed snapshot, and pushes only the changes (ALTER TABLE statements) to Supabase via RPC.
+- The Vite plugin's `buildStart` hook loads your schema, diffs against the committed snapshot, and pushes only the changes (ALTER TABLE statements) directly to Postgres.
 - If the migration fails, the snapshot is **not updated**, so the next build retries the same migration.
 - IndexedDB migrations happen client-side at runtime (no build step needed).
 
-**Security:** `SUPABASE_SERVICE_ROLE_KEY` is only used server-side during the Vite build process. It is never bundled into client code or exposed to users. `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are served at runtime from your `/api/config` endpoint -- these are public keys by design, protected by Supabase Row Level Security.
+**Security:** `DATABASE_URL` is only used server-side during the Vite build process. It is never bundled into client code or exposed to users. `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are served at runtime from your `/api/config` endpoint -- these are public keys by design, protected by Supabase Row Level Security.
 
 See [API Reference -- Vite Plugin](./API_REFERENCE.md#vite-plugin-stellarpwa) for full configuration options.
 

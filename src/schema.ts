@@ -49,7 +49,7 @@ export interface SQLGenerationOptions {
   includeCRDT?: boolean;
   /** Include trusted_devices table. @default true */
   includeDeviceVerification?: boolean;
-  /** Include helper functions (set_user_id, update_updated_at). @default true */
+  /** Include helper trigger functions (set_user_id, update_updated_at_column). @default true */
   includeHelperFunctions?: boolean;
   /**
    * Generate idempotent SQL that can safely run against an existing database.
@@ -751,21 +751,6 @@ export function generateSupabaseSQL(
     parts.push('  return new;');
     parts.push('end;');
     parts.push("$$ language plpgsql set search_path = '';");
-    parts.push('');
-
-    parts.push('-- Function to execute migration SQL via RPC (service_role only)');
-    parts.push('-- Used by the Vite plugin to auto-push schema migrations during dev.');
-    parts.push('create or replace function stellar_engine_migrate(sql_text text)');
-    parts.push('returns void as $$');
-    parts.push('begin');
-    parts.push(
-      "  if current_setting('request.jwt.claims', true)::json->>'role' != 'service_role' then"
-    );
-    parts.push("    raise exception 'Unauthorized: stellar_engine_migrate requires service_role';");
-    parts.push('  end if;');
-    parts.push('  execute sql_text;');
-    parts.push('end;');
-    parts.push("$$ language plpgsql security definer set search_path = '';");
     parts.push('');
   }
 

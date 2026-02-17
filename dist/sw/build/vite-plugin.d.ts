@@ -6,14 +6,14 @@
  * The plugin hooks into three Vite/Rollup lifecycle events:
  *   - **`buildStart`** — generates `static/sw.js` from the compiled SW template.
  *     When `schema` is enabled, also runs a one-shot schema processing pass
- *     (types generation + migration push). This ensures CI builds that never
- *     run `npm run dev` still auto-migrate Supabase.
+ *     (types generation + migration push via direct Postgres connection).
+ *     This ensures CI builds that never run `npm run dev` still auto-migrate.
  *   - **`closeBundle`** — after Rollup finishes writing chunks, scans the
  *     immutable output directory and writes `asset-manifest.json` listing
  *     all JS/CSS files for the service worker to precache.
  *   - **`configureServer`** (dev only) — watches the schema file and
  *     auto-generates TypeScript types + auto-pushes Supabase migrations
- *     on every save, with 500ms debounce to prevent RPC spam.
+ *     on every save, with 500ms debounce to prevent migration spam.
  *
  * @example
  * ```ts
@@ -69,9 +69,9 @@ export interface SchemaConfig {
      */
     typesOutput?: string;
     /**
-     * Whether to auto-push migration SQL to Supabase via RPC.
-     * When `true`, requires `PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
-     * in the environment. Falls back to a warning if env vars are missing.
+     * Whether to auto-push migration SQL to Supabase via direct Postgres connection.
+     * When `true`, requires `DATABASE_URL` in the environment and the `postgres`
+     * npm package installed. Falls back to a warning if either is missing.
      * @default true
      */
     autoMigrate?: boolean;
@@ -113,8 +113,8 @@ export interface SWConfig {
  *   - Generates `static/sw.js` from the compiled SW template.
  *   - When `schema` is enabled: loads the schema file via esbuild, generates
  *     TypeScript types, diffs against the snapshot, and pushes migration SQL
- *     to Supabase. This ensures CI/CD builds that skip `npm run dev` still
- *     auto-migrate the database.
+ *     to Supabase via direct Postgres connection (`DATABASE_URL`). This
+ *     ensures CI/CD builds that skip `npm run dev` still auto-migrate.
  *
  * **`closeBundle` hook:**
  *   - Scans SvelteKit's immutable output directory for JS and CSS files.

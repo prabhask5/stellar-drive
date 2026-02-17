@@ -6,14 +6,14 @@
  * The plugin hooks into three Vite/Rollup lifecycle events:
  *   - **`buildStart`** — generates `static/sw.js` from the compiled SW template.
  *     When `schema` is enabled, also runs a one-shot schema processing pass
- *     (types generation + migration push). This ensures CI builds that never
- *     run `npm run dev` still auto-migrate Supabase.
+ *     (types generation + migration push via direct Postgres connection).
+ *     This ensures CI builds that never run `npm run dev` still auto-migrate.
  *   - **`closeBundle`** — after Rollup finishes writing chunks, scans the
  *     immutable output directory and writes `asset-manifest.json` listing
  *     all JS/CSS files for the service worker to precache.
  *   - **`configureServer`** (dev only) — watches the schema file and
  *     auto-generates TypeScript types + auto-pushes Supabase migrations
- *     on every save, with 500ms debounce to prevent RPC spam.
+ *     on every save, with 500ms debounce to prevent migration spam.
  *
  * @example
  * ```ts
@@ -339,11 +339,11 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
     }
 }
 /**
- * Push migration SQL to Supabase via the `stellar_engine_migrate` RPC function.
+ * Push migration SQL to Supabase via a direct Postgres connection.
  *
- * Checks for required env vars before attempting the RPC call. If env vars
- * are missing, logs a clear warning with the exact variable names and skips
- * the migration (types are still generated).
+ * Uses the `DATABASE_URL` environment variable to connect directly to the
+ * Supabase Postgres database and execute migration SQL. This eliminates the
+ * need for a bootstrap RPC function and works on fresh databases.
  *
  * @param sql - The migration SQL to execute.
  * @param opts - The resolved schema options.
@@ -351,37 +351,45 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
  * @returns `true` if the migration was pushed successfully, `false` otherwise.
  */
 async function pushMigration(sql, opts, root) {
-    const supabaseUrl = process.env.PUBLIC_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!supabaseUrl || !serviceRoleKey) {
-        const missing = [];
-        if (!supabaseUrl)
-            missing.push('PUBLIC_SUPABASE_URL');
-        if (!serviceRoleKey)
-            missing.push('SUPABASE_SERVICE_ROLE_KEY');
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
         const relTypes = relative(root, resolve(opts.typesOutput));
-        console.warn(`[stellar-drive] \u26a0 Supabase auto-migration skipped \u2014 missing env vars:\n` +
-            missing.map((v) => `  ${v}`).join('\n') +
-            `\n  Set these in .env to enable automatic schema sync.\n` +
+        console.warn(`[stellar-drive] \u26a0 Supabase auto-migration skipped \u2014 missing env var:\n` +
+            `  DATABASE_URL\n` +
+            `  Set this in .env to enable automatic schema sync.\n` +
+            `  Find it: Supabase Dashboard \u2192 Settings \u2192 Database \u2192 Connection string (URI)\n` +
             `  Types were still generated at ${relTypes}`);
         return false;
     }
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    let postgres;
     try {
-        const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient(supabaseUrl, serviceRoleKey);
-        const { error } = await supabase.rpc('stellar_engine_migrate', { sql_text: sql });
-        if (error) {
-            console.error(`[stellar-drive] \u274c Migration failed: ${error.message}`);
-            return false;
-        }
-        else {
-            console.log('[stellar-drive] \u2705 Schema migrated successfully');
-            return true;
-        }
+        /* Dynamic import — `postgres` is an optional dependency only needed when
+         * autoMigrate is enabled. The string indirection prevents TypeScript and
+         * bundlers from resolving it at compile time. */
+        const depName = 'postgres';
+        const mod = await import(depName);
+        postgres = mod.default;
+    }
+    catch {
+        console.error('[stellar-drive] \u274c Missing dependency: `postgres`\n' +
+            '  Install it with: npm install postgres\n' +
+            '  This package is required for automatic schema migrations.');
+        return false;
+    }
+    const sql_client = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+    try {
+        await sql_client.unsafe(sql);
+        console.log('[stellar-drive] \u2705 Schema migrated successfully');
+        return true;
     }
     catch (err) {
-        console.error('[stellar-drive] \u274c Migration RPC error:', err);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[stellar-drive] \u274c Migration failed: ${message}`);
         return false;
+    }
+    finally {
+        await sql_client.end();
     }
 }
 // =============================================================================
@@ -395,8 +403,8 @@ async function pushMigration(sql, opts, root) {
  *   - Generates `static/sw.js` from the compiled SW template.
  *   - When `schema` is enabled: loads the schema file via esbuild, generates
  *     TypeScript types, diffs against the snapshot, and pushes migration SQL
- *     to Supabase. This ensures CI/CD builds that skip `npm run dev` still
- *     auto-migrate the database.
+ *     to Supabase via direct Postgres connection (`DATABASE_URL`). This
+ *     ensures CI/CD builds that skip `npm run dev` still auto-migrate.
  *
  * **`closeBundle` hook:**
  *   - Scans SvelteKit's immutable output directory for JS and CSS files.

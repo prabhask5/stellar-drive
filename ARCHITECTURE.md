@@ -1974,8 +1974,8 @@ The scaffolded project is fully wired for the schema auto-generation workflow:
 
 - `vite.config.ts` includes `stellarPWA({ ..., schema: true })`
 - `src/lib/schema.ts` is the single source of truth, imported by both the Vite plugin and the app's `+layout.ts`
-- `.env.example` documents all three Supabase env vars (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`)
-- `.gitignore` excludes `.stellar/` and `src/lib/types.generated.ts`
+- `.env.example` documents all required env vars (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `DATABASE_URL`)
+- `.gitignore` excludes `src/lib/types.generated.ts` (`.stellar/schema-snapshot.json` is committed for CI/CD migration diffing)
 - `src/lib/types.ts` imports from `types.generated.ts` with guidance on `Omit` + extend narrowing
 
 ---
@@ -2008,10 +2008,10 @@ Schema file changes (src/lib/schema.ts)
         if different: generateMigrationSQL(old, new) → ALTER TABLE deltas
   |
   v
-[Push migration SQL] ── supabase.rpc('stellar_engine_migrate', { sql_text })
-  |                      requires SUPABASE_SERVICE_ROLE_KEY
+[Push migration SQL] ── direct Postgres connection via DATABASE_URL
+  |                      uses `postgres` npm package
   v
-[Save snapshot] ── .stellar/schema-snapshot.json (updated)
+[Save snapshot] ── .stellar/schema-snapshot.json (only on success)
 ```
 
 ### 19.2 Dev vs Build Behavior
@@ -2030,28 +2030,18 @@ Schema file changes (src/lib/schema.ts)
 
 | Variable | Required For | Description |
 |---|---|---|
-| `PUBLIC_SUPABASE_URL` | Migration push | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Migration push | Service role key with RLS bypass for DDL execution |
+| `DATABASE_URL` | Migration push | Postgres connection string for direct SQL execution |
 
-If either is missing, TypeScript types are still generated but migration push is **skipped** with a console warning. This allows local development without Supabase credentials.
+If `DATABASE_URL` is not set, TypeScript types are still generated but migration push is **skipped** with a console warning. This allows local development without database credentials.
 
-### 19.4 The `stellar_engine_migrate` RPC Function
+### 19.4 Direct Postgres Migration
 
-Auto-generated in the initial SQL output, this PostgreSQL function accepts arbitrary SQL and executes it dynamically. Access is restricted to the `service_role` JWT:
+Migrations are pushed via a **direct Postgres connection** using the `DATABASE_URL` environment variable and the `postgres` npm package. This approach:
 
-```sql
-create or replace function stellar_engine_migrate(sql_text text)
-returns void as $$
-begin
-  if current_setting('request.jwt.claims', true)::json->>'role' != 'service_role' then
-    raise exception 'Unauthorized: stellar_engine_migrate requires service_role';
-  end if;
-  execute sql_text;
-end;
-$$ language plpgsql security definer;
-```
-
-The Vite plugin creates a temporary Supabase client using the service role key and calls this RPC to apply schema changes. This provides a secure, auditable channel for automated DDL without exposing the database connection string.
+- **Eliminates bootstrap requirements** -- works on completely fresh databases with no prior setup
+- **Uses idempotent SQL on first run** -- `CREATE TABLE IF NOT EXISTS` ensures existing databases aren't affected
+- **Retries on failure** -- the schema snapshot is only saved after a successful push, so the next build retries automatically
+- **Short-lived connections** -- one connection per migration push, closed immediately after
 
 ### 19.5 Migration Safety
 

@@ -250,6 +250,7 @@ function generatePackageJson(opts: InstallOptions): string {
           vite: '^6.0.0'
         },
         dependencies: {
+          postgres: '^3.4.0',
           'stellar-drive': '^1.0.6'
         },
         type: 'module'
@@ -829,19 +830,19 @@ Copy \`.env.example\` to \`.env\` and fill in:
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data access |
 | \`PUBLIC_SUPABASE_ANON_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data access |
-| \`SUPABASE_SERVICE_ROLE_KEY\` | Supabase Dashboard → Settings → API → \`service_role\` key | Auto-migration (dev/build) |
+| \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto-migration (dev/build) |
 
-> **Note:** \`SUPABASE_SERVICE_ROLE_KEY\` is optional. Without it, types still auto-generate but Supabase schema migrations are skipped. You can apply migrations manually using the SQL printed in the build output.
+> **Note:** \`DATABASE_URL\` is optional for local development. Without it, types still auto-generate but Supabase schema migrations are skipped.
 
 ## Schema Workflow
 
 \`src/lib/schema.ts\` is the single source of truth. When you edit it and save:
 
 1. **TypeScript types** auto-generate at \`src/lib/types.generated.ts\`
-2. **Supabase schema** auto-migrates via RPC (when \`SUPABASE_SERVICE_ROLE_KEY\` is set)
+2. **Supabase schema** auto-migrates via direct Postgres connection (when \`DATABASE_URL\` is set)
 3. **IndexedDB (Dexie)** auto-upgrades on next page load (version hash changes)
 
-This works in both \`npm run dev\` (file watcher) and \`npm run build\` (one-shot).
+This works in both \`npm run dev\` (file watcher) and \`npm run build\` (one-shot). No manual SQL is ever needed — the Vite plugin handles everything.
 
 ## Deploying to Vercel
 
@@ -853,15 +854,15 @@ The schema migration runs automatically during every \`vite build\`. To enable i
    |----------|------|----------|
    | \`PUBLIC_SUPABASE_URL\` | Plain | Yes |
    | \`PUBLIC_SUPABASE_ANON_KEY\` | Plain | Yes |
-   | \`SUPABASE_SERVICE_ROLE_KEY\` | Secret | Yes — auto-migration |
+   | \`DATABASE_URL\` | Secret | Yes — auto-migration |
 
 2. **Commit \`.stellar/schema-snapshot.json\`** — this file tracks your last-known schema. Without it, every build treats the schema as brand new. It updates automatically when you run \`dev\` or \`build\`; commit it alongside schema changes.
 
-3. **First deploy**: The very first build (with no snapshot) generates the full initial SQL and pushes it. If your database already has tables, the SQL uses \`IF NOT EXISTS\` so it won't fail.
+3. **First deploy**: The very first build (with no snapshot) generates idempotent initial SQL (\`CREATE TABLE IF NOT EXISTS\`) and pushes it directly to Postgres. Works on fresh databases and databases with existing tables.
 
-> **Security:** \`SUPABASE_SERVICE_ROLE_KEY\` is only used server-side during the build. It is never bundled into client code. \`PUBLIC_SUPABASE_URL\` and \`PUBLIC_SUPABASE_ANON_KEY\` are served at runtime from \`/api/config\` — these are public keys protected by Supabase RLS.
+> **Security:** \`DATABASE_URL\` is only used server-side during the build. It is never bundled into client code. \`PUBLIC_SUPABASE_URL\` and \`PUBLIC_SUPABASE_ANON_KEY\` are served at runtime from \`/api/config\` — these are public keys protected by Supabase RLS.
 
-> **Failed migrations:** If a migration fails (e.g., env var typo), the snapshot is NOT updated. The next build will retry the same migration automatically.
+> **Failed migrations:** If a migration fails, the snapshot is NOT updated. The next build will retry the same migration automatically.
 
 ## Scripts
 
@@ -939,7 +940,7 @@ static/
 \`src/lib/schema.ts\` is the single source of truth for the database. It drives three systems:
 
 1. **TypeScript types** — auto-generated at \`src/lib/types.generated.ts\` on every dev save / build
-2. **Supabase schema** — auto-migrated via RPC when \`SUPABASE_SERVICE_ROLE_KEY\` is set in \`.env\`
+2. **Supabase schema** — auto-migrated via direct Postgres connection when \`DATABASE_URL\` is set in \`.env\`
 3. **IndexedDB (Dexie)** — auto-versioned at runtime via hash-based version detection
 
 ### How it works
@@ -955,13 +956,13 @@ static/
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data |
 | \`PUBLIC_SUPABASE_ANON_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data |
-| \`SUPABASE_SERVICE_ROLE_KEY\` | Supabase Dashboard → Settings → API → \`service_role\` key | Auto-migration |
+| \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto-migration |
 
-> \`SUPABASE_SERVICE_ROLE_KEY\` is only used server-side during builds. It is never bundled into client code. Without it, types still auto-generate but Supabase migrations are skipped.
+> \`DATABASE_URL\` is only used server-side during builds. It is never bundled into client code. Without it, types still auto-generate but Supabase migrations are skipped.
 
 ### Deploying to Vercel
 
-Set all three env vars above in your Vercel project settings. The Vite plugin runs the migration during \`buildStart\` on every deploy. Commit \`.stellar/schema-snapshot.json\` to git so Vercel can diff against your last schema state.
+Set all three env vars above in your Vercel project settings. The Vite plugin connects directly to Postgres during \`buildStart\` on every deploy. Commit \`.stellar/schema-snapshot.json\` to git so Vercel can diff against your last schema state.
 
 > **Important**: \`.stellar/schema-snapshot.json\` must be committed. Without it, every deploy is treated as a first run. The initial SQL is idempotent (\`IF NOT EXISTS\`), but committing the snapshot avoids unnecessary work and ensures proper incremental migrations.
 
@@ -1019,10 +1020,10 @@ The \`stellarPWA\` Vite plugin (\`schema: true\`) watches \`src/lib/schema.ts\` 
 
 1. **Generates TypeScript types** at \`src/lib/types.generated.ts\` — one interface per table with system columns (\`id\`, \`created_at\`, \`updated_at\`, \`deleted\`, \`_version\`, \`device_id\`)
 2. **Diffs against \`.stellar/schema-snapshot.json\`** — produces \`ALTER TABLE\` migration SQL for changed tables
-3. **Pushes migration SQL to Supabase** via the \`stellar_engine_migrate\` RPC function (requires \`SUPABASE_SERVICE_ROLE_KEY\`)
+3. **Pushes migration SQL to Supabase** via direct Postgres connection (requires \`DATABASE_URL\`)
 4. **Updates the snapshot** for the next diff (only on success — failed migrations are retried automatically)
 
-This runs on every save in dev mode (500ms debounce) and once during production builds (including Vercel). Set \`SUPABASE_SERVICE_ROLE_KEY\` in your CI/CD environment variables to enable auto-migration on deploy.
+This runs on every save in dev mode (500ms debounce) and once during production builds (including Vercel). Set \`DATABASE_URL\` in your CI/CD environment variables to enable auto-migration on deploy.
 
 ### Field types
 
@@ -4598,7 +4599,7 @@ export const demoConfig: DemoConfig = {
  * This is the single source of truth for the app's database schema:
  *   - `initEngine({ schema })` reads it at runtime for Dexie stores
  *   - The Vite plugin auto-generates TypeScript types on save
- *   - The Vite plugin auto-migrates Supabase when .env has SUPABASE_SERVICE_ROLE_KEY
+ *   - The Vite plugin auto-migrates Supabase when .env has DATABASE_URL
  *
  * @returns The TypeScript source for `src/lib/schema.ts`.
  */
@@ -4608,7 +4609,7 @@ function generateSchemaFile(_opts: InstallOptions): string {
  *
  * Edit this file and save. During \`npm run dev\`:
  *   - TypeScript types auto-generate at src/lib/types.generated.ts
- *   - Supabase schema auto-migrates (when .env has SUPABASE_SERVICE_ROLE_KEY)
+ *   - Supabase schema auto-migrates (when .env has DATABASE_URL)
  *   - Dexie (IndexedDB) auto-upgrades on next page load
  *
  * Each key is a Supabase table name (snake_case). Values are either:
@@ -4675,19 +4676,19 @@ PUBLIC_SUPABASE_URL=
 PUBLIC_SUPABASE_ANON_KEY=
 
 # -----------------------------------------------------------------------------
-# Supabase — Server / Migrations (secret, never expose to the client)
+# Database — Migrations (secret, never expose to the client)
 # -----------------------------------------------------------------------------
 
-# The service_role key — has full bypass access to RLS.
+# The Postgres connection string for your Supabase database.
 # Used by the stellar-drive Vite plugin to auto-push schema migrations
-# during dev and build (via the \`stellar_engine_migrate\` RPC function).
+# during dev and build via a direct Postgres connection.
 # If not set, schema migrations are skipped (types still auto-generate).
-# Find it: Supabase Dashboard → Settings → API → Project API keys → service_role
+# Find it: Supabase Dashboard → Settings → Database → Connection string (URI)
 #
 # IMPORTANT: When deploying to Vercel, set this as a Secret environment
 # variable in your Vercel project settings. It is only used server-side
 # during the build and is NEVER bundled into client code.
-SUPABASE_SERVICE_ROLE_KEY=
+DATABASE_URL=
 `;
 }
 

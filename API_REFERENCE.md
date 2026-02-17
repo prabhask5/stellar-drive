@@ -1650,7 +1650,7 @@ When `schema` is an object instead of `true`, these options are available:
 When `schema` is enabled, the plugin drives three systems from a single `schema.ts` file:
 
 1. **TypeScript interfaces** -- auto-generated at `src/lib/types.generated.ts`
-2. **Supabase DDL** -- auto-migrated via the `stellar_engine_migrate` RPC function
+2. **Supabase DDL** -- auto-migrated via direct Postgres connection
 3. **IndexedDB/Dexie** -- auto-versioned at runtime by the engine's `initEngine()` call
 
 #### Development Mode (`npm run dev`)
@@ -1668,29 +1668,17 @@ When `schema` is enabled, the plugin drives three systems from a single `schema.
 
 The plugin maintains a JSON snapshot of the last-known schema state at `.stellar/schema-snapshot.json`. This file is used for **incremental migration diffing**:
 
-- **First run (no snapshot):** Generates full initial SQL via `generateSupabaseSQL()` (CREATE TABLE, RLS policies, triggers, indexes, extensions, helper functions). Pushes to Supabase and saves the snapshot.
-- **Subsequent runs:** Loads the snapshot, compares against the current schema. If different, calls `generateMigrationSQL()` to produce only the delta (ALTER TABLE statements). Pushes to Supabase and updates the snapshot.
+- **First run (no snapshot):** Generates idempotent initial SQL via `generateSupabaseSQL()` (`CREATE TABLE IF NOT EXISTS`, RLS policies, triggers, indexes, extensions, helper functions). Pushes directly to Postgres and saves the snapshot. Works on both fresh databases and databases with existing tables.
+- **Subsequent runs:** Loads the snapshot, compares against the current schema. If different, calls `generateMigrationSQL()` to produce only the delta (ALTER TABLE statements). Pushes to Postgres and updates the snapshot.
+- **Failed migrations:** If a migration push fails, the snapshot is **not updated**. The next build or dev save retries the same migration automatically.
 
-The `.stellar/` directory should be added to `.gitignore` (the `install pwa` command does this automatically).
+The `.stellar/schema-snapshot.json` file should be **committed to git** so CI/CD builds (e.g., Vercel) can diff against the last-known schema state.
 
 #### Migration Push (`pushMigration`)
 
-Migrations are pushed to Supabase via an RPC function:
+Migrations are pushed to Supabase via a **direct Postgres connection** using the `DATABASE_URL` environment variable and the `postgres` npm package. This eliminates any bootstrap requirements -- migrations work on completely fresh databases with no prior setup.
 
-```sql
--- Auto-generated in the initial SQL
-create or replace function stellar_engine_migrate(sql_text text)
-returns void as $$
-begin
-  if current_setting('request.jwt.claims', true)::json->>'role' != 'service_role' then
-    raise exception 'Unauthorized: stellar_engine_migrate requires service_role';
-  end if;
-  execute sql_text;
-end;
-$$ language plpgsql security definer;
-```
-
-The plugin creates a temporary Supabase client with the **service role key** and calls `supabase.rpc('stellar_engine_migrate', { sql_text: sql })`. This function only accepts calls with the `service_role` JWT, preventing unauthorized schema modifications.
+The connection is short-lived (one query per migration push) and the client is closed immediately after execution.
 
 #### Migration Safety
 
@@ -1700,15 +1688,15 @@ The plugin creates a temporary Supabase client with the **service role key** and
 
 #### Fallback When Environment Variables Are Missing
 
-If `PUBLIC_SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` are not set:
+If `DATABASE_URL` is not set:
 
-- **TypeScript types are still generated** -- the plugin does not require Supabase credentials for type generation.
+- **TypeScript types are still generated** -- the plugin does not require database credentials for type generation.
 - **Migration push is skipped** with a warning:
   ```
-  [stellar-drive] ⚠ Supabase auto-migration skipped — missing env vars
+  [stellar-drive] ⚠ Supabase auto-migration skipped — missing env var: DATABASE_URL
   ```
 
-This means local development works without Supabase credentials; only the auto-migration feature requires them.
+This means local development works without database credentials; only the auto-migration feature requires them.
 
 ### Environment Variables
 
@@ -1716,18 +1704,18 @@ The Vite plugin and SvelteKit server helpers read these environment variables:
 
 | Variable | Required For | Description |
 |---|---|---|
-| `PUBLIC_SUPABASE_URL` | Runtime + migrations | Your Supabase project URL (e.g., `https://abc.supabase.co`). Find it: Supabase Dashboard > Settings > API > Project URL. |
+| `PUBLIC_SUPABASE_URL` | Runtime | Your Supabase project URL (e.g., `https://abc.supabase.co`). Find it: Supabase Dashboard > Settings > API > Project URL. |
 | `PUBLIC_SUPABASE_ANON_KEY` | Runtime | The anonymous/public API key for client-side auth and data access. Find it: Supabase Dashboard > Settings > API > Project API keys > anon public. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Auto-migration only | The service role key with full RLS bypass. Used by the Vite plugin to push schema migrations via the `stellar_engine_migrate` RPC. If not set, migrations are skipped. Find it: Supabase Dashboard > Settings > API > Project API keys > service_role. **Never expose this key to the client.** |
+| `DATABASE_URL` | Auto-migration only | Postgres connection string for direct SQL execution. Used by the Vite plugin to push schema migrations. If not set, migrations are skipped. Find it: Supabase Dashboard > Settings > Database > Connection string (URI). **Never expose this to the client.** |
 
 ### Generated Files
 
 | File | Purpose | Git-tracked? |
 |---|---|---|
 | `src/lib/types.generated.ts` | TypeScript interfaces from schema | No (add to `.gitignore`) |
-| `.stellar/schema-snapshot.json` | Schema state for migration diffing | No (add to `.gitignore`) |
-| `static/sw.js` | Service worker with cache config | Yes |
-| `static/asset-manifest.json` | Asset list for SW precaching | Yes |
+| `.stellar/schema-snapshot.json` | Schema state for migration diffing | **Yes** (commit to git) |
+| `static/sw.js` | Service worker with cache config | No (add to `.gitignore`) |
+| `static/asset-manifest.json` | Asset list for SW precaching | No (add to `.gitignore`) |
 
 ---
 
@@ -1771,13 +1759,13 @@ npx stellar-drive install pwa
 
 After running `install pwa`:
 
-1. Copy `.env.example` to `.env` and fill in your Supabase credentials.
-2. Run `npm install` to install dependencies.
+1. Copy `.env.example` to `.env` and fill in your Supabase credentials (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `DATABASE_URL`).
+2. Run `npm install` to install dependencies (includes the `postgres` package for direct database access).
 3. Run `npm run dev` -- the Vite plugin will:
    - Generate TypeScript types at `src/lib/types.generated.ts`
-   - Generate initial Supabase SQL and push it via `stellar_engine_migrate` (if `SUPABASE_SERVICE_ROLE_KEY` is set)
+   - Generate idempotent initial SQL and push it directly to Postgres (if `DATABASE_URL` is set)
    - Create `.stellar/schema-snapshot.json` for future migration diffing
-4. If `SUPABASE_SERVICE_ROLE_KEY` is not set, manually run the generated `supabase-schema.sql` in the Supabase SQL Editor.
+4. Commit `.stellar/schema-snapshot.json` to git so future builds produce incremental migrations.
 
 #### Schema Workflow Integration
 
@@ -1785,7 +1773,7 @@ The scaffolded project is fully integrated with the schema auto-generation workf
 
 - `vite.config.ts` includes `stellarPWA({ ..., schema: true })`.
 - `src/lib/schema.ts` is the single source of truth, imported by both the Vite plugin (for type/SQL generation) and the app's `+layout.ts` (for `initEngine()`).
-- `.gitignore` excludes `.stellar/` and `src/lib/types.generated.ts`.
+- `.gitignore` excludes `src/lib/types.generated.ts` (but `.stellar/schema-snapshot.json` is committed for CI/CD migration diffing).
 - `src/lib/types.ts` imports from `types.generated.ts` and provides a place for app-specific type narrowing (e.g., `Omit<Generated, 'field'> & { field: NarrowType }`).
 
 ---

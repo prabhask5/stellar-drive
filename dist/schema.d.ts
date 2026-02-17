@@ -43,7 +43,7 @@ export interface SQLGenerationOptions {
     includeCRDT?: boolean;
     /** Include trusted_devices table. @default true */
     includeDeviceVerification?: boolean;
-    /** Include helper functions (set_user_id, update_updated_at). @default true */
+    /** Include helper trigger functions (set_user_id, update_updated_at_column). @default true */
     includeHelperFunctions?: boolean;
     /**
      * Generate idempotent SQL that can safely run against an existing database.
