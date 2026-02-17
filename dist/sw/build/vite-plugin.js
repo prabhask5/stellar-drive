@@ -279,11 +279,25 @@ async function pushSchema(sql, opts, root) {
             '  This package is required for automatic schema sync.');
         return false;
     }
-    /* Force IPv4 DNS resolution — some CI environments (e.g., Vercel) cannot
-       reach Supabase Postgres over IPv6, causing ENETUNREACH errors. */
-    const dns = await import('dns');
-    dns.setDefaultResultOrder('ipv4first');
-    const sql_client = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+    /* Force IPv4 — some CI environments (e.g., Vercel) cannot reach Supabase
+       Postgres over IPv6, causing ENETUNREACH errors. Resolve the hostname to
+       an IPv4 address and substitute it in the connection string. */
+    let resolvedUrl = databaseUrl;
+    try {
+        const url = new URL(databaseUrl);
+        const dns = await import('dns');
+        const { promisify } = await import('util');
+        const resolve4 = promisify(dns.resolve4);
+        const addresses = await resolve4(url.hostname);
+        if (addresses.length > 0) {
+            url.hostname = addresses[0];
+            resolvedUrl = url.toString();
+        }
+    }
+    catch {
+        /* DNS resolution failed — fall through with original URL. */
+    }
+    const sql_client = postgres(resolvedUrl, { max: 1, idle_timeout: 5 });
     try {
         await sql_client.unsafe(sql);
         console.log('[stellar-drive] \u2705 Schema pushed successfully');
