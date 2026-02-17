@@ -233,8 +233,9 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
  * Push schema SQL to Supabase via a direct Postgres connection.
  *
  * Reads `DATABASE_URL` from `process.env` first, then falls back to `.env`
- * files in the project root (since Vite plugins don't get `.env` loaded
- * into `process.env` automatically).
+ * files in the project root (Vite plugins don't get `.env` loaded into
+ * `process.env` automatically). Use a Supabase pooler URL to avoid IPv6
+ * issues on CI environments like Vercel.
  *
  * @param sql - The idempotent schema SQL to execute.
  * @param opts - The resolved schema options.
@@ -279,31 +280,13 @@ async function pushSchema(sql, opts, root) {
             '  This package is required for automatic schema sync.');
         return false;
     }
-    /* Force IPv4 — some CI environments (e.g., Vercel) cannot reach Supabase
-       Postgres over IPv6, causing ENETUNREACH errors. Resolve the hostname to
-       an IPv4 address and pass it as a host override. */
-    const connectOpts = { max: 1, idle_timeout: 5 };
-    try {
-        const hostname = databaseUrl.match(/@([^:/]+)/)?.[1];
-        if (hostname) {
-            const dns = await import('dns');
-            const { promisify } = await import('util');
-            const addresses = await promisify(dns.resolve4)(hostname);
-            if (addresses.length > 0) {
-                connectOpts.host = addresses[0];
-            }
-        }
-    }
-    catch {
-        /* DNS resolution failed — fall through with default resolution. */
-    }
     /* Log Postgres NOTICEs (e.g. "relation already exists, skipping") as
        concise one-liners instead of full JSON objects. */
-    connectOpts.onnotice = (notice) => {
+    const onnotice = (notice) => {
         if (notice.message)
             console.log(`[stellar-drive] ${notice.message}`);
     };
-    const sql_client = postgres(databaseUrl, connectOpts);
+    const sql_client = postgres(databaseUrl, { max: 1, idle_timeout: 5, onnotice });
     try {
         await sql_client.unsafe(sql);
         console.log('[stellar-drive] \u2705 Schema pushed successfully');
