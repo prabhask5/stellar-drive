@@ -1630,16 +1630,18 @@ export const load: LayoutLoad = async ({ url }): Promise<RootLayoutData> => {
   if (browser) {
     const result = await resolveRootLayout();
 
-    const isPublicRoute = PUBLIC_ROUTES.some(r => url.pathname.startsWith(r));
-    if (result.authMode === 'none' && !isPublicRoute) {
-      if (!result.serverConfigured) {
+    if (result.authMode === 'none') {
+      if (!result.serverConfigured && !url.pathname.startsWith('/setup')) {
         redirect(307, '/setup');
-      } else {
-        const returnUrl = url.pathname + url.search;
-        const loginUrl = returnUrl && returnUrl !== '/'
-          ? \`/login?redirect=\${encodeURIComponent(returnUrl)}\`
-          : '/login';
-        redirect(307, loginUrl);
+      } else if (result.serverConfigured) {
+        const isPublicRoute = PUBLIC_ROUTES.some(r => url.pathname.startsWith(r));
+        if (!isPublicRoute) {
+          const returnUrl = url.pathname + url.search;
+          const loginUrl = returnUrl && returnUrl !== '/'
+            ? \`/login?redirect=\${encodeURIComponent(returnUrl)}\`
+            : '/login';
+          redirect(307, loginUrl);
+        }
       }
     }
 
