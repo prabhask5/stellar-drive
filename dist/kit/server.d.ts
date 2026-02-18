@@ -44,6 +44,8 @@ export interface DeployConfig {
     supabaseUrl: string;
     /** The Supabase publishable key for client-side access. */
     supabasePublishableKey: string;
+    /** Production domain (e.g., `https://stellar.example.com`). Set as `PUBLIC_APP_DOMAIN` env var. */
+    appDomain?: string;
 }
 /**
  * Result of a Vercel deployment attempt.
@@ -78,6 +80,8 @@ export interface ServerConfig {
     supabaseUrl?: string;
     /** The Supabase publishable key, if configured. */
     supabasePublishableKey?: string;
+    /** Production domain, if configured. */
+    appDomain?: string;
 }
 /**
  * Reads Supabase configuration from `process.env` at runtime.

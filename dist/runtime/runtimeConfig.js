@@ -156,7 +156,8 @@ export async function initConfig() {
                     const config = {
                         supabaseUrl: serverConfig.supabaseUrl,
                         supabasePublishableKey: serverConfig.supabasePublishableKey,
-                        configured: true
+                        configured: true,
+                        ...(serverConfig.appDomain ? { appDomain: serverConfig.appDomain } : {})
                     };
                     configCache = config;
                     saveToCache(config);

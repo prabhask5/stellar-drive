@@ -812,11 +812,13 @@ async function forceFullSync() {
         await resetSyncCursor();
         // Clear local data (except sync queue - keep pending changes)
         const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
-        await db.transaction('rw', entityTables, async () => {
-            for (const t of entityTables) {
-                await t.clear();
-            }
-        });
+        if (entityTables.length > 0) {
+            await db.transaction('rw', entityTables, async () => {
+                for (const t of entityTables) {
+                    await t.clear();
+                }
+            });
+        }
         debugLog('[SYNC] Local data cleared, pulling from server...');
         syncStatusStore.setStatus('syncing');
         syncStatusStore.setSyncMessage('Downloading all data...');
@@ -1763,27 +1765,29 @@ async function fullReconciliation() {
         }
         // Compare local IDs against server IDs and remove orphans
         const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
-        await db.transaction('rw', entityTables, async () => {
-            for (let i = 0; i < config.tables.length; i++) {
-                if (results[i].error)
-                    continue;
-                const serverIds = new Set((results[i].data || []).map((r) => r.id));
-                const localTable = db.table(getDexieTableFor(config.tables[i]));
-                const localRecords = (await localTable.toArray());
-                const orphanIds = [];
-                for (const local of localRecords) {
-                    // Record exists locally but not on server (and isn't already marked deleted)
-                    if (!local.deleted && !serverIds.has(local.id)) {
-                        orphanIds.push(local.id);
+        if (entityTables.length > 0) {
+            await db.transaction('rw', entityTables, async () => {
+                for (let i = 0; i < config.tables.length; i++) {
+                    if (results[i].error)
+                        continue;
+                    const serverIds = new Set((results[i].data || []).map((r) => r.id));
+                    const localTable = db.table(getDexieTableFor(config.tables[i]));
+                    const localRecords = (await localTable.toArray());
+                    const orphanIds = [];
+                    for (const local of localRecords) {
+                        // Record exists locally but not on server (and isn't already marked deleted)
+                        if (!local.deleted && !serverIds.has(local.id)) {
+                            orphanIds.push(local.id);
+                        }
+                    }
+                    if (orphanIds.length > 0) {
+                        await localTable.bulkDelete(orphanIds);
+                        totalRemoved += orphanIds.length;
+                        debugLog(`[SYNC] Full reconciliation: removed ${orphanIds.length} orphaned records from ${getDexieTableFor(config.tables[i])}`);
                     }
                 }
-                if (orphanIds.length > 0) {
-                    await localTable.bulkDelete(orphanIds);
-                    totalRemoved += orphanIds.length;
-                    debugLog(`[SYNC] Full reconciliation: removed ${orphanIds.length} orphaned records from ${getDexieTableFor(config.tables[i])}`);
-                }
-            }
-        });
+            });
+        }
         if (totalRemoved > 0) {
             debugLog(`[SYNC] Full reconciliation complete: ${totalRemoved} orphaned records removed`);
             notifySyncComplete();
@@ -1896,14 +1900,16 @@ async function hydrateFromRemote() {
         }
         // Store everything locally
         const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
-        await db.transaction('rw', entityTables, async () => {
-            for (let i = 0; i < config.tables.length; i++) {
-                const data = results[i].data;
-                if (data && data.length > 0) {
-                    await db.table(getDexieTableFor(config.tables[i])).bulkPut(data);
+        if (entityTables.length > 0) {
+            await db.transaction('rw', entityTables, async () => {
+                for (let i = 0; i < config.tables.length; i++) {
+                    const data = results[i].data;
+                    if (data && data.length > 0) {
+                        await db.table(getDexieTableFor(config.tables[i])).bulkPut(data);
+                    }
                 }
-            }
-        });
+            });
+        }
         // Set sync cursor to MAX of pulled data timestamps (prevents missing concurrent changes)
         setLastSyncCursor(maxUpdatedAt, userId);
         syncStatusStore.setStatus('idle');
@@ -1966,18 +1972,20 @@ async function cleanupLocalTombstones() {
     let totalDeleted = 0;
     try {
         const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
-        await db.transaction('rw', entityTables, async () => {
-            for (const tableConfig of config.tables) {
-                const table = db.table(getDexieTableFor(tableConfig));
-                const count = await table
-                    .filter((item) => item.deleted === true && item.updated_at < cutoffStr)
-                    .delete();
-                if (count > 0) {
-                    debugLog(`[Tombstone] Cleaned ${count} old records from local ${getDexieTableFor(tableConfig)}`);
-                    totalDeleted += count;
+        if (entityTables.length > 0) {
+            await db.transaction('rw', entityTables, async () => {
+                for (const tableConfig of config.tables) {
+                    const table = db.table(getDexieTableFor(tableConfig));
+                    const count = await table
+                        .filter((item) => item.deleted === true && item.updated_at < cutoffStr)
+                        .delete();
+                    if (count > 0) {
+                        debugLog(`[Tombstone] Cleaned ${count} old records from local ${getDexieTableFor(tableConfig)}`);
+                        totalDeleted += count;
+                    }
                 }
-            }
-        });
+            });
+        }
         if (totalDeleted > 0) {
             debugLog(`[Tombstone] Local cleanup complete: ${totalDeleted} total records removed`);
         }

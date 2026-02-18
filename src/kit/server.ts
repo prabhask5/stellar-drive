@@ -75,6 +75,9 @@ export interface DeployConfig {
 
   /** The Supabase publishable key for client-side access. */
   supabasePublishableKey: string;
+
+  /** Production domain (e.g., `https://stellar.example.com`). Set as `PUBLIC_APP_DOMAIN` env var. */
+  appDomain?: string;
 }
 
 /**
@@ -115,6 +118,9 @@ export interface ServerConfig {
 
   /** The Supabase publishable key, if configured. */
   supabasePublishableKey?: string;
+
+  /** Production domain, if configured. */
+  appDomain?: string;
 }
 
 // =============================================================================
@@ -253,9 +259,15 @@ async function setEnvVar(
 export function getServerConfig(): ServerConfig {
   const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
   const supabasePublishableKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
+  const appDomain = process.env.PUBLIC_APP_DOMAIN || '';
 
   if (supabaseUrl && supabasePublishableKey) {
-    return { configured: true, supabaseUrl, supabasePublishableKey };
+    return {
+      configured: true,
+      supabaseUrl,
+      supabasePublishableKey,
+      ...(appDomain ? { appDomain } : {})
+    };
   }
   return { configured: false };
 }
@@ -312,6 +324,10 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
       'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY',
       config.supabasePublishableKey
     );
+
+    if (config.appDomain) {
+      await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_DOMAIN', config.appDomain);
+    }
 
     // -------------------------------------------------------------------------
     //  Phase 2 — Trigger production redeployment

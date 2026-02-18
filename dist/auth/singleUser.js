@@ -249,11 +249,15 @@ export async function setupSingleUser(gate, profile, email) {
         const now = new Date().toISOString();
         const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
         /* Build profile metadata for Supabase user_metadata — allows the host app
-           to transform profile fields into a Supabase-friendly shape */
+           to transform profile fields into a Supabase-friendly shape.
+           Includes app_name and app_domain so shared email templates can
+           personalise branding and link back to the correct domain. */
         const profileToMetadata = engineConfig.auth?.profileToMetadata;
         const metadata = {
             ...(profileToMetadata ? profileToMetadata(profile) : profile),
-            code_length: codeLength ?? 6
+            code_length: codeLength ?? 6,
+            app_name: engineConfig.name || engineConfig.prefix,
+            app_domain: engineConfig.domain || ''
         };
         if (!isOffline) {
             // --- ONLINE SETUP ---
