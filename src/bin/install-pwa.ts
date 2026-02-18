@@ -1192,21 +1192,164 @@ function generateSplashSvg(label: string): string {
 }
 
 // ---------------------------------------------------------------------------
-//                  EMAIL TEMPLATE PLACEHOLDER
+//                       EMAIL TEMPLATE GENERATORS
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a placeholder HTML email template with a TODO comment.
+ * Generate the signup confirmation email HTML template.
  *
- * @param title - The email template title (e.g., `"Change Email"`).
- * @returns The HTML source for the email placeholder.
+ * Uses `{{ .Data.app_name }}` and `{{ .Data.app_domain }}` (from Supabase
+ * user_metadata) so the template works without any Supabase dashboard
+ * configuration — important for self-hosted deployments.
+ *
+ * @returns The HTML source for the signup confirmation email.
  */
-function generateEmailPlaceholder(title: string): string {
-  return `<!-- TODO: ${title} email template -->
-<!-- See stellar-drive EMAIL_TEMPLATES.md for the full template format -->
-<!DOCTYPE html>
-<html><head><title>${title}</title></head>
-<body><p>TODO: Implement ${title} email template</p></body>
+function generateSignupEmail(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirm Your Email</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #f4f4f5; color: #1a1a2e;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f5;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="max-width: 520px; width: 100%;">
+          <tr>
+            <td align="center" style="padding-bottom: 24px; font-size: 24px; font-weight: 700; color: #1a1a2e;">
+              {{ .Data.app_name }}
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #ffffff; border: 1px solid #e0e0e6; border-radius: 12px; padding: 40px;">
+              <h1 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 600; color: #1a1a2e; text-align: center;">Confirm Your Email</h1>
+              <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.6; color: #4a4a68; text-align: center;">Welcome to {{ .Data.app_name }}! Click the button below to verify your email address and get started.</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="padding-bottom: 24px;">
+                    <a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=signup" target="_blank" style="display: inline-block; padding: 14px 36px; font-size: 15px; font-weight: 600; color: #ffffff; background-color: #3b82f6; text-decoration: none; border-radius: 8px;">Verify Email Address</a>
+                  </td>
+                </tr>
+              </table>
+              <hr style="border: none; border-top: 1px solid #e0e0e6; margin: 0 0 16px 0;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #8888a0; text-align: center;">Or copy and paste this link into your browser:</p>
+              <p style="margin: 0; font-size: 11px; word-break: break-all; text-align: center;"><a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=signup" style="color: #3b82f6;">{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&amp;type=signup</a></p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top: 24px; text-align: center;">
+              <p style="margin: 0 0 6px 0; font-size: 12px; color: #8888a0;">This link will expire in 24 hours.</p>
+              <p style="margin: 0 0 12px 0; font-size: 12px; color: #8888a0;">If you didn't create an account, you can safely ignore this email.</p>
+              <p style="margin: 0; font-size: 11px; color: #aaaabc;">&copy; {{ .Data.app_name }}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+}
+
+function generateChangeEmail(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirm Your New Email</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #f4f4f5; color: #1a1a2e;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f5;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="max-width: 520px; width: 100%;">
+          <tr>
+            <td align="center" style="padding-bottom: 24px; font-size: 24px; font-weight: 700; color: #1a1a2e;">
+              {{ .Data.app_name }}
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #ffffff; border: 1px solid #e0e0e6; border-radius: 12px; padding: 40px;">
+              <h1 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 600; color: #1a1a2e; text-align: center;">Confirm Your New Email</h1>
+              <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.6; color: #4a4a68; text-align: center;">You requested to change your email address. Click the button below to confirm this new email for your {{ .Data.app_name }} account.</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="padding-bottom: 24px;">
+                    <a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=email_change" target="_blank" style="display: inline-block; padding: 14px 36px; font-size: 15px; font-weight: 600; color: #ffffff; background-color: #3b82f6; text-decoration: none; border-radius: 8px;">Confirm New Email</a>
+                  </td>
+                </tr>
+              </table>
+              <hr style="border: none; border-top: 1px solid #e0e0e6; margin: 0 0 16px 0;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #8888a0; text-align: center;">Or copy and paste this link into your browser:</p>
+              <p style="margin: 0; font-size: 11px; word-break: break-all; text-align: center;"><a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=email_change" style="color: #3b82f6;">{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&amp;type=email_change</a></p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top: 24px; text-align: center;">
+              <p style="margin: 0 0 6px 0; font-size: 12px; color: #8888a0;">This link will expire in 24 hours.</p>
+              <p style="margin: 0 0 12px 0; font-size: 12px; color: #8888a0;">If you didn't request this change, you can safely ignore this email.</p>
+              <p style="margin: 0; font-size: 11px; color: #aaaabc;">&copy; {{ .Data.app_name }}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+}
+
+function generateDeviceVerificationEmail(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verify Your Device</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #f4f4f5; color: #1a1a2e;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f5;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="max-width: 520px; width: 100%;">
+          <tr>
+            <td align="center" style="padding-bottom: 24px; font-size: 24px; font-weight: 700; color: #1a1a2e;">
+              {{ .Data.app_name }}
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #ffffff; border: 1px solid #e0e0e6; border-radius: 12px; padding: 40px;">
+              <h1 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 600; color: #1a1a2e; text-align: center;">Verify Your Device</h1>
+              <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.6; color: #4a4a68; text-align: center;">A sign-in attempt was made from a new device. Click the button below to verify this device and grant it access to your {{ .Data.app_name }} account.</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="padding-bottom: 24px;">
+                    <a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=email" target="_blank" style="display: inline-block; padding: 14px 36px; font-size: 15px; font-weight: 600; color: #ffffff; background-color: #22c55e; text-decoration: none; border-radius: 8px;">Verify This Device</a>
+                  </td>
+                </tr>
+              </table>
+              <hr style="border: none; border-top: 1px solid #e0e0e6; margin: 0 0 16px 0;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #8888a0; text-align: center;">Or copy and paste this link into your browser:</p>
+              <p style="margin: 0; font-size: 11px; word-break: break-all; text-align: center;"><a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=email" style="color: #3b82f6;">{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&amp;type=email</a></p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top: 24px; text-align: center;">
+              <p style="margin: 0 0 6px 0; font-size: 12px; color: #8888a0;">This link will expire in 24 hours.</p>
+              <p style="margin: 0 0 12px 0; font-size: 12px; color: #8888a0;">If you didn't attempt to sign in, someone may have your code. Consider changing it immediately.</p>
+              <p style="margin: 0; font-size: 11px; color: #aaaabc;">&copy; {{ .Data.app_name }}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
 </html>
 `;
 }
@@ -4820,9 +4963,9 @@ export async function run(): Promise<void> {
         ['static/icons/monochrome.svg', generateMonochromeSvg(firstLetter)],
         ['static/icons/splash.svg', generateSplashSvg(opts.shortName)],
         ['static/icons/apple-touch.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
-        ['static/change-email.html', generateEmailPlaceholder('Change Email')],
-        ['static/device-verification-email.html', generateEmailPlaceholder('Device Verification')],
-        ['static/signup-email.html', generateEmailPlaceholder('Signup Email')]
+        ['static/change-email.html', generateChangeEmail()],
+        ['static/device-verification-email.html', generateDeviceVerificationEmail()],
+        ['static/signup-email.html', generateSignupEmail()]
       ]
     },
     {
