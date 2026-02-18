@@ -755,9 +755,10 @@ Copy \`.env.example\` to \`.env\` and fill in:
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data access |
 | \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`publishable\` key | Client auth + data access |
+| \`PUBLIC_APP_DOMAIN\` | Your production URL (e.g. \`https://myapp.example.com\`) | Email template links |
 | \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto schema sync (dev/build) |
 
-> **Note:** \`DATABASE_URL\` is optional for local development. Without it, types still auto-generate but Supabase schema sync is skipped.
+> **Note:** \`DATABASE_URL\` is optional for local development. Without it, types still auto-generate but Supabase schema sync is skipped. \`PUBLIC_APP_DOMAIN\` is optional — if not set, email confirmation links fall back to the Supabase \`SiteURL\` setting.
 
 ## Schema Workflow
 
@@ -779,9 +780,10 @@ The schema sync runs automatically during every \`vite build\`. To enable it on 
    |----------|------|----------|
    | \`PUBLIC_SUPABASE_URL\` | Plain | Yes |
    | \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Plain | Yes |
+   | \`PUBLIC_APP_DOMAIN\` | Plain | Optional — email links |
    | \`DATABASE_URL\` | Secret | Yes — auto schema sync |
 
-> **Security:** \`DATABASE_URL\` is only used server-side during the build. It is never bundled into client code. \`PUBLIC_SUPABASE_URL\` and \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` are served at runtime from \`/api/config\` — these are public keys protected by Supabase RLS.
+> **Security:** \`DATABASE_URL\` is only used server-side during the build. It is never bundled into client code. \`PUBLIC_SUPABASE_URL\` and \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` are served at runtime from \`/api/config\` — these are public keys protected by Supabase RLS. \`PUBLIC_APP_DOMAIN\` is used in Supabase email templates so confirmation links point to the correct app.
 
 ## Scripts
 
@@ -872,13 +874,14 @@ The full idempotent schema SQL (\`CREATE TABLE IF NOT EXISTS\`, \`ALTER TABLE AD
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data |
 | \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`publishable\` key | Client auth + data |
+| \`PUBLIC_APP_DOMAIN\` | Your production URL (e.g. \`https://myapp.example.com\`) | Email template links |
 | \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto schema sync |
 
-> \`DATABASE_URL\` is only used server-side during builds. It is never bundled into client code. Without it, types still auto-generate but Supabase schema sync is skipped.
+> \`DATABASE_URL\` is only used server-side during builds. It is never bundled into client code. Without it, types still auto-generate but Supabase schema sync is skipped. \`PUBLIC_APP_DOMAIN\` is optional — used so email confirmation links point to the correct app domain instead of the Supabase \`SiteURL\`.
 
 ### Deploying to Vercel
 
-Set all three env vars above in your Vercel project settings. The Vite plugin pushes the full idempotent schema SQL during every \`buildStart\` — no snapshots or state tracking needed.
+Set the env vars above in your Vercel project settings. The Vite plugin pushes the full idempotent schema SQL during every \`buildStart\` — no snapshots or state tracking needed.
 
 ## Demo Mode
 
@@ -1339,6 +1342,8 @@ export type { RootLayoutData as LayoutData };
 if (browser) {
   initEngine({
     prefix: '${opts.prefix}',
+    name: '${opts.name}',
+    domain: window.location.origin,
     schema,
     auth: { gateType: 'code' },
     demo: demoConfig,
@@ -1882,6 +1887,9 @@ function generateSetupPageSvelte(opts) {
   /** One-time Vercel API token for setting env vars */
   let vercelToken = $state('');
 
+  /** Production domain — pre-filled from current origin */
+  let appDomain = $state(typeof window !== 'undefined' ? window.location.origin : '');
+
   // =============================================================================
   //  UI State — Validation & Deployment feedback
   // =============================================================================
@@ -1976,7 +1984,8 @@ function generateSetupPageSvelte(opts) {
         setConfig({
           supabaseUrl,
           supabasePublishableKey,
-          configured: true
+          configured: true,
+          ...(appDomain ? { appDomain } : {})
         });
       } else {
         validateError = data.error || 'Validation failed';
@@ -2030,7 +2039,7 @@ function generateSetupPageSvelte(opts) {
       const res = await fetch('/api/setup/deploy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ supabaseUrl, supabasePublishableKey, vercelToken })
+        body: JSON.stringify({ supabaseUrl, supabasePublishableKey, vercelToken, appDomain })
       });
 
       const data = await res.json();
@@ -3005,7 +3014,7 @@ import type { RequestHandler } from './$types';
  */
 export const POST: RequestHandler = async ({ request }) => {
   /* ── Parse and validate request body ── */
-  const { supabaseUrl, supabasePublishableKey, vercelToken } = await request.json();
+  const { supabaseUrl, supabasePublishableKey, vercelToken, appDomain } = await request.json();
 
   if (!supabaseUrl || !supabasePublishableKey || !vercelToken) {
     return json(
@@ -3024,7 +3033,10 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   /* ── Delegate to engine ── */
-  const result = await deployToVercel({ vercelToken, projectId, supabaseUrl, supabasePublishableKey });
+  const result = await deployToVercel({
+    vercelToken, projectId, supabaseUrl, supabasePublishableKey,
+    ...(appDomain ? { appDomain } : {})
+  });
   return json(result);
 };
 `;
@@ -4479,6 +4491,12 @@ PUBLIC_SUPABASE_URL=
 # This key is safe to include in client bundles; RLS policies protect data.
 # Find it: Supabase Dashboard → Settings → API → Project API keys → publishable
 PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=
+
+# The production domain for this app (e.g. https://myapp.example.com).
+# Used in Supabase email templates so confirmation links point to the correct
+# app when multiple apps share one Supabase project.
+# If not set, email links fall back to the Supabase SiteURL setting.
+PUBLIC_APP_DOMAIN=
 
 # -----------------------------------------------------------------------------
 # Database — Migrations (secret, never expose to the client)

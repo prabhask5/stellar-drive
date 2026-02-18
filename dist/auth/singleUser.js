@@ -510,6 +510,20 @@ export async function unlockSingleUser(gate) {
                 config.updatedAt = new Date().toISOString();
                 await writeConfig(config);
             }
+            /* Re-apply profile to user_metadata on each login to keep Supabase
+               in sync with any local profile changes made while offline.
+               This runs BEFORE device verification so that app_domain is set
+               in user_metadata before any OTP email is sent — email templates
+               use {{ .Data.app_domain }} for confirmation links. */
+            const profileToMetadata = engineConfig.auth?.profileToMetadata;
+            const metadata = {
+                ...(profileToMetadata ? profileToMetadata(config.profile) : config.profile),
+                app_name: engineConfig.name || engineConfig.prefix,
+                app_domain: engineConfig.domain || ''
+            };
+            await supabase.auth.updateUser({ data: metadata }).catch((e) => {
+                debugWarn('[SingleUser] Failed to update user_metadata on unlock:', e);
+            });
             /* Device verification gate: if enabled, check whether this device
                is in the trusted_devices table before granting access */
             const deviceVerificationEnabled = engineConfig.auth?.deviceVerification?.enabled ?? false;
@@ -534,13 +548,6 @@ export async function unlockSingleUser(gate) {
                    the trust window */
                 await touchTrustedDevice(user.id);
             }
-            /* Re-apply profile to user_metadata on each login to keep Supabase
-               in sync with any local profile changes made while offline */
-            const profileToMetadata = engineConfig.auth?.profileToMetadata;
-            const metadata = profileToMetadata ? profileToMetadata(config.profile) : config.profile;
-            await supabase.auth.updateUser({ data: metadata }).catch((e) => {
-                debugWarn('[SingleUser] Failed to update user_metadata on unlock:', e);
-            });
             /* Cache offline credentials for future offline unlocks */
             try {
                 await cacheOfflineCredentials(config.email, gate, user, session);
@@ -908,10 +915,15 @@ export async function updateSingleUserProfile(profile) {
         const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
         if (!isOffline) {
             /* Transform profile into Supabase metadata format using the host
-               app's custom transformer, if provided */
+               app's custom transformer, if provided. Always include app_name
+               and app_domain to keep email template variables current. */
             const engineConfig = getEngineConfig();
             const profileToMetadata = engineConfig.auth?.profileToMetadata;
-            const metadata = profileToMetadata ? profileToMetadata(profile) : profile;
+            const metadata = {
+                ...(profileToMetadata ? profileToMetadata(profile) : profile),
+                app_name: engineConfig.name || engineConfig.prefix,
+                app_domain: engineConfig.domain || ''
+            };
             const { error } = await supabase.auth.updateUser({ data: metadata });
             if (error) {
                 debugWarn('[SingleUser] Failed to update Supabase profile:', error.message);
@@ -1215,6 +1227,17 @@ export async function linkSingleUserDevice(email, pin) {
             updatedAt: now
         };
         await writeConfig(config);
+        /* Update user_metadata with app_name/app_domain before device verification
+           so OTP email templates can use {{ .Data.app_domain }} for links */
+        const profileToMetadata = engineConfig.auth?.profileToMetadata;
+        const linkMetadata = {
+            ...(profileToMetadata ? profileToMetadata(profile) : profile),
+            app_name: engineConfig.name || engineConfig.prefix,
+            app_domain: engineConfig.domain || ''
+        };
+        await supabase.auth.updateUser({ data: linkMetadata }).catch((e) => {
+            debugWarn('[SingleUser] Failed to update user_metadata on link:', e);
+        });
         /* Check device verification */
         const deviceVerificationEnabled = engineConfig.auth?.deviceVerification?.enabled ?? false;
         if (deviceVerificationEnabled) {
