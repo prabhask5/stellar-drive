@@ -128,7 +128,7 @@ export function joinPresence(
 export function leavePresence(documentId: string): void {
   collaboratorsByDocument.delete(documentId);
   lastCursorUpdate.delete(documentId);
-  /* Don't delete listeners — they unsubscribe themselves. */
+  changeListeners.delete(documentId);
 }
 
 /**

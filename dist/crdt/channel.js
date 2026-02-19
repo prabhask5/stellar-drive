@@ -156,8 +156,8 @@ export class CRDTChannel {
                 /* Initiate sync protocol — request missing updates from peers. */
                 this.sendSyncStep1();
             }
-            else if (status === 'CHANNEL_ERROR') {
-                debugWarn(`[CRDT] Channel ${this.channelName} error`);
+            else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                debugWarn(`[CRDT] Channel ${this.channelName} ${status.toLowerCase()}`);
                 this.handleDisconnect();
             }
             else if (status === 'CLOSED') {
@@ -268,24 +268,34 @@ export class CRDTChannel {
      * (skip messages from our own device).
      */
     handleBroadcastMessage(message) {
+        /* Validate message shape — prevent malformed messages from crashing the handler. */
+        if (!message || typeof message.type !== 'string' || typeof message.deviceId !== 'string') {
+            debugWarn(`[CRDT] Document ${this.documentId}: received malformed broadcast message`);
+            return;
+        }
         /* Echo suppression — skip messages from our own device. */
         if (message.deviceId === this.deviceId) {
             debugLog(`[CRDT] Document ${this.documentId}: skipped own-device echo (deviceId=${this.deviceId})`);
             return;
         }
-        switch (message.type) {
-            case 'update':
-                this.handleRemoteUpdate(message);
-                break;
-            case 'sync-step-1':
-                this.handleSyncStep1(message);
-                break;
-            case 'sync-step-2':
-                this.handleSyncStep2(message);
-                break;
-            case 'chunk':
-                this.handleChunk(message);
-                break;
+        try {
+            switch (message.type) {
+                case 'update':
+                    this.handleRemoteUpdate(message);
+                    break;
+                case 'sync-step-1':
+                    this.handleSyncStep1(message);
+                    break;
+                case 'sync-step-2':
+                    this.handleSyncStep2(message);
+                    break;
+                case 'chunk':
+                    this.handleChunk(message);
+                    break;
+            }
+        }
+        catch (e) {
+            debugWarn(`[CRDT] Document ${this.documentId}: error handling broadcast message:`, e);
         }
     }
     /**
@@ -294,7 +304,7 @@ export class CRDTChannel {
     handleRemoteUpdate(message) {
         const update = base64ToUint8(message.data);
         debugLog(`[CRDT] Document ${this.documentId}: received remote update from device ${message.deviceId} (${update.byteLength} bytes)`);
-        Y.applyUpdate(this.doc, update);
+        Y.applyUpdate(this.doc, update, 'remote');
     }
     /**
      * Handle sync-step-1: a peer is requesting missing updates.
@@ -320,7 +330,7 @@ export class CRDTChannel {
     handleSyncStep2(message) {
         const update = base64ToUint8(message.update);
         debugLog(`[CRDT] Document ${this.documentId}: sync-step-2 received from ${message.deviceId} (${update.byteLength} bytes)`);
-        Y.applyUpdate(this.doc, update);
+        Y.applyUpdate(this.doc, update, 'remote');
         /* Resolve any pending sync waiters. */
         for (const resolver of this.syncResolvers.values()) {
             resolver();
@@ -335,9 +345,17 @@ export class CRDTChannel {
      */
     handleChunk(message) {
         const { chunkId, index, total, data } = message;
+        /* Expire stale chunk buffers before processing new chunks. */
+        const now = Date.now();
+        for (const [id, buf] of this.chunkBuffers) {
+            if (now - buf.createdAt > CRDTChannel.CHUNK_BUFFER_TTL_MS) {
+                debugWarn(`[CRDT] Document ${this.documentId}: expired incomplete chunk buffer ${id}`);
+                this.chunkBuffers.delete(id);
+            }
+        }
         let buffer = this.chunkBuffers.get(chunkId);
         if (!buffer) {
-            buffer = { total, chunks: new Map() };
+            buffer = { total, chunks: new Map(), createdAt: now };
             this.chunkBuffers.set(chunkId, buffer);
         }
         buffer.chunks.set(index, data);
@@ -352,7 +370,7 @@ export class CRDTChannel {
             /* Process as an update message. */
             const update = base64ToUint8(fullBase64);
             debugLog(`[CRDT] Document ${this.documentId}: reassembled ${buffer.total} chunks (${update.byteLength} bytes)`);
-            Y.applyUpdate(this.doc, update);
+            Y.applyUpdate(this.doc, update, 'remote');
         }
     }
     // ===========================================================================
@@ -444,6 +462,10 @@ export class CRDTChannel {
     setupLocalChannel() {
         if (typeof BroadcastChannel === 'undefined')
             return;
+        /* Close existing channel to prevent duplicate listeners on reconnect. */
+        if (this.localChannel) {
+            this.localChannel.close();
+        }
         this.localChannel = new BroadcastChannel(this.channelName);
         this.localChannel.onmessage = (event) => {
             const message = event.data;
@@ -453,7 +475,7 @@ export class CRDTChannel {
             /* Apply update from another tab on the same device. */
             if (message.type === 'update') {
                 const update = base64ToUint8(message.data);
-                Y.applyUpdate(this.doc, update);
+                Y.applyUpdate(this.doc, update, 'remote');
             }
         };
     }
@@ -519,4 +541,6 @@ export class CRDTChannel {
         this.onConnectionStateChange?.(state);
     }
 }
+/** TTL for incomplete chunk buffers (30 seconds). */
+CRDTChannel.CHUNK_BUFFER_TTL_MS = 30000;
 //# sourceMappingURL=channel.js.map

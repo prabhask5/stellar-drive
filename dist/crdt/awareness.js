@@ -110,7 +110,7 @@ export function joinPresence(documentId, isConnected, initialPresence) {
 export function leavePresence(documentId) {
     collaboratorsByDocument.delete(documentId);
     lastCursorUpdate.delete(documentId);
-    /* Don't delete listeners — they unsubscribe themselves. */
+    changeListeners.delete(documentId);
 }
 /**
  * Handle a remote user joining the document.

@@ -45,6 +45,8 @@ export interface CRDTProvider {
     readonly connectionState: CRDTConnectionState;
     /** Whether the document has unsaved changes. */
     readonly isDirty: boolean;
+    /** Resolves when network sync (channel join + sync protocol) completes. */
+    readonly networkReady: Promise<void>;
     /** Destroy this provider and release all resources. */
     destroy(): Promise<void>;
 }

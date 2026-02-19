@@ -104,7 +104,13 @@ export class CRDTChannel {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // --- Chunk reassembly state ---
-  private chunkBuffers: Map<string, { total: number; chunks: Map<number, string> }> = new Map();
+  private chunkBuffers: Map<
+    string,
+    { total: number; chunks: Map<number, string>; createdAt: number }
+  > = new Map();
+
+  /** TTL for incomplete chunk buffers (30 seconds). */
+  private static readonly CHUNK_BUFFER_TTL_MS = 30_000;
 
   // --- Reconnection state ---
   private reconnectAttempts = 0;
@@ -200,8 +206,8 @@ export class CRDTChannel {
 
         /* Initiate sync protocol — request missing updates from peers. */
         this.sendSyncStep1();
-      } else if (status === 'CHANNEL_ERROR') {
-        debugWarn(`[CRDT] Channel ${this.channelName} error`);
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        debugWarn(`[CRDT] Channel ${this.channelName} ${status.toLowerCase()}`);
         this.handleDisconnect();
       } else if (status === 'CLOSED') {
         this.setConnectionState('disconnected');
@@ -329,6 +335,12 @@ export class CRDTChannel {
    * (skip messages from our own device).
    */
   private handleBroadcastMessage(message: BroadcastMessage): void {
+    /* Validate message shape — prevent malformed messages from crashing the handler. */
+    if (!message || typeof message.type !== 'string' || typeof message.deviceId !== 'string') {
+      debugWarn(`[CRDT] Document ${this.documentId}: received malformed broadcast message`);
+      return;
+    }
+
     /* Echo suppression — skip messages from our own device. */
     if (message.deviceId === this.deviceId) {
       debugLog(
@@ -337,19 +349,23 @@ export class CRDTChannel {
       return;
     }
 
-    switch (message.type) {
-      case 'update':
-        this.handleRemoteUpdate(message);
-        break;
-      case 'sync-step-1':
-        this.handleSyncStep1(message);
-        break;
-      case 'sync-step-2':
-        this.handleSyncStep2(message);
-        break;
-      case 'chunk':
-        this.handleChunk(message);
-        break;
+    try {
+      switch (message.type) {
+        case 'update':
+          this.handleRemoteUpdate(message);
+          break;
+        case 'sync-step-1':
+          this.handleSyncStep1(message);
+          break;
+        case 'sync-step-2':
+          this.handleSyncStep2(message);
+          break;
+        case 'chunk':
+          this.handleChunk(message);
+          break;
+      }
+    } catch (e) {
+      debugWarn(`[CRDT] Document ${this.documentId}: error handling broadcast message:`, e);
     }
   }
 
@@ -361,7 +377,7 @@ export class CRDTChannel {
     debugLog(
       `[CRDT] Document ${this.documentId}: received remote update from device ${message.deviceId} (${update.byteLength} bytes)`
     );
-    Y.applyUpdate(this.doc, update);
+    Y.applyUpdate(this.doc, update, 'remote');
   }
 
   /**
@@ -394,7 +410,7 @@ export class CRDTChannel {
     debugLog(
       `[CRDT] Document ${this.documentId}: sync-step-2 received from ${message.deviceId} (${update.byteLength} bytes)`
     );
-    Y.applyUpdate(this.doc, update);
+    Y.applyUpdate(this.doc, update, 'remote');
 
     /* Resolve any pending sync waiters. */
     for (const resolver of this.syncResolvers.values()) {
@@ -412,9 +428,18 @@ export class CRDTChannel {
   private handleChunk(message: BroadcastChunkMessage): void {
     const { chunkId, index, total, data } = message;
 
+    /* Expire stale chunk buffers before processing new chunks. */
+    const now = Date.now();
+    for (const [id, buf] of this.chunkBuffers) {
+      if (now - buf.createdAt > CRDTChannel.CHUNK_BUFFER_TTL_MS) {
+        debugWarn(`[CRDT] Document ${this.documentId}: expired incomplete chunk buffer ${id}`);
+        this.chunkBuffers.delete(id);
+      }
+    }
+
     let buffer = this.chunkBuffers.get(chunkId);
     if (!buffer) {
-      buffer = { total, chunks: new Map() };
+      buffer = { total, chunks: new Map(), createdAt: now };
       this.chunkBuffers.set(chunkId, buffer);
     }
 
@@ -434,7 +459,7 @@ export class CRDTChannel {
       debugLog(
         `[CRDT] Document ${this.documentId}: reassembled ${buffer.total} chunks (${update.byteLength} bytes)`
       );
-      Y.applyUpdate(this.doc, update);
+      Y.applyUpdate(this.doc, update, 'remote');
     }
   }
 
@@ -543,6 +568,11 @@ export class CRDTChannel {
   private setupLocalChannel(): void {
     if (typeof BroadcastChannel === 'undefined') return;
 
+    /* Close existing channel to prevent duplicate listeners on reconnect. */
+    if (this.localChannel) {
+      this.localChannel.close();
+    }
+
     this.localChannel = new BroadcastChannel(this.channelName);
     this.localChannel.onmessage = (event: MessageEvent) => {
       const message = event.data as BroadcastMessage;
@@ -553,7 +583,7 @@ export class CRDTChannel {
       /* Apply update from another tab on the same device. */
       if (message.type === 'update') {
         const update = base64ToUint8(message.data);
-        Y.applyUpdate(this.doc, update);
+        Y.applyUpdate(this.doc, update, 'remote');
       }
     };
   }

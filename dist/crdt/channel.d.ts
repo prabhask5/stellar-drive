@@ -45,6 +45,8 @@ export declare class CRDTChannel {
     private pendingUpdates;
     private debounceTimer;
     private chunkBuffers;
+    /** TTL for incomplete chunk buffers (30 seconds). */
+    private static readonly CHUNK_BUFFER_TTL_MS;
     private reconnectAttempts;
     private reconnectTimer;
     private destroyed;

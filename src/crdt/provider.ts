@@ -57,6 +57,9 @@ import type { CRDTConnectionState, CRDTDocumentRecord, OpenDocumentOptions } fro
  */
 const activeProviders: Map<string, CRDTProviderImpl> = new Map();
 
+/** Tracks in-flight openDocument init promises for concurrent-safety. */
+const initPromises: Map<string, Promise<CRDTProvider>> = new Map();
+
 // =============================================================================
 //  CRDTProvider Interface (public)
 // =============================================================================
@@ -78,6 +81,8 @@ export interface CRDTProvider {
   readonly connectionState: CRDTConnectionState;
   /** Whether the document has unsaved changes. */
   readonly isDirty: boolean;
+  /** Resolves when network sync (channel join + sync protocol) completes. */
+  readonly networkReady: Promise<void>;
   /** Destroy this provider and release all resources. */
   destroy(): Promise<void>;
 }
@@ -124,11 +129,20 @@ class CRDTProviderImpl implements CRDTProvider {
   /** Guard against concurrent persist operations. */
   private persistInProgress = false;
 
+  /** The in-flight persist promise (for awaiting in destroy). */
+  private persistPromise: Promise<void> | null = null;
+
+  /** Guard against concurrent reconnect operations. */
+  private reconnectInProgress = false;
+
   /** Whether the current online state is true. */
   private _isOnline = true;
 
   /** Store subscription cleanup function. */
   private onlineUnsubscribe: (() => void) | null = null;
+
+  /** Generation counter for saveToIndexedDB race prevention. */
+  private saveGeneration = 0;
 
   constructor(documentId: string, pageId: string, offlineEnabled: boolean) {
     this.documentId = documentId;
@@ -168,25 +182,53 @@ class CRDTProviderImpl implements CRDTProvider {
 
     /* Step 1: Load initial state. */
     await this.loadInitialState();
+    if (this.destroyed) return;
 
     /* Step 2: Wire the update handler. */
     this.wireUpdateHandler();
 
-    /* Step 3: Join the Broadcast channel (if online). */
-    if (this._isOnline) {
-      await this.joinChannel();
+    /* Step 3: Start periodic Supabase persist timer. */
+    this.startPersistTimer();
 
-      /* Step 4: Run sync protocol. */
-      if (this.channel) {
-        const peersResponded = await this.channel.waitForSync();
-        if (!peersResponded) {
-          /* No peers online — fetch latest state from Supabase if available. */
-          await this.fetchAndMergeRemoteState();
-        }
+    /* Record initial state vector for dirty detection. */
+    this.lastPersistedStateVector = Y.encodeStateVector(this.doc);
+
+    /* Step 4: Join the Broadcast channel (if online) — background, non-blocking. */
+    if (this._isOnline) {
+      this.networkReady = this.initNetwork(options).catch((e) => {
+        debugWarn(`[CRDT] Document ${this.documentId}: network init failed:`, e);
+      });
+    } else {
+      this.networkReady = Promise.resolve();
+    }
+
+    debugLog(
+      `[CRDT] Opening document ${this.documentId} (pageId=${this.pageId}, offlineEnabled=${this.offlineEnabled})`
+    );
+  }
+
+  /** Resolves when network sync (channel join + sync protocol) completes. */
+  networkReady: Promise<void> = Promise.resolve();
+
+  /**
+   * Initialize network layer (channel + sync + presence) — runs in background.
+   */
+  private async initNetwork(options: OpenDocumentOptions): Promise<void> {
+    await this.joinChannel();
+    if (this.destroyed) return;
+
+    /* Run sync protocol. */
+    if (this.channel) {
+      const peersResponded = await this.channel.waitForSync();
+      if (this.destroyed) return;
+      if (!peersResponded) {
+        /* No peers online — fetch latest state from Supabase if available. */
+        await this.fetchAndMergeRemoteState();
+        if (this.destroyed) return;
       }
     }
 
-    /* Step 5: Join presence if initial presence was provided. */
+    /* Join presence if initial presence was provided. */
     if (options.initialPresence) {
       joinPresence(this.documentId, this.channel?.connectionState === 'connected', {
         name: options.initialPresence.name,
@@ -198,16 +240,6 @@ class CRDTProviderImpl implements CRDTProvider {
         avatarUrl: options.initialPresence.avatarUrl
       });
     }
-
-    /* Step 6: Start periodic Supabase persist timer. */
-    this.startPersistTimer();
-
-    /* Record initial state vector for dirty detection. */
-    this.lastPersistedStateVector = Y.encodeStateVector(this.doc);
-
-    debugLog(
-      `[CRDT] Opening document ${this.documentId} (pageId=${this.pageId}, offlineEnabled=${this.offlineEnabled})`
-    );
   }
 
   // ===========================================================================
@@ -230,12 +262,12 @@ class CRDTProviderImpl implements CRDTProvider {
       /* Apply stored full state. */
       Y.applyUpdate(this.doc, localRecord.state);
 
-      /* Replay any pending updates that weren't captured in the last full save. */
+      /* Replay any pending updates that weren't captured in the last full save.
+       * Use 'load' origin to prevent update handler from re-queuing/re-broadcasting. */
       const pendingUpdates = await loadPendingUpdates(this.documentId);
       if (pendingUpdates.length > 0) {
-        for (const pending of pendingUpdates) {
-          Y.applyUpdate(this.doc, pending.update);
-        }
+        const merged = Y.mergeUpdates(pendingUpdates.map((p) => p.update));
+        Y.applyUpdate(this.doc, merged, 'load');
         debugLog(
           `[CRDT] Document ${this.documentId} loaded from IndexedDB (${localRecord.stateSize} bytes, ${pendingUpdates.length} pending updates)`
         );
@@ -291,8 +323,8 @@ class CRDTProviderImpl implements CRDTProvider {
    */
   private wireUpdateHandler(): void {
     this.updateHandler = (update: Uint8Array, origin: unknown) => {
-      /* Skip updates that originated from remote peers (already persisted by them). */
-      if (origin === 'remote') return;
+      /* Skip updates that originated from remote peers or replayed loads. */
+      if (origin === 'remote' || origin === 'load') return;
 
       this._isDirty = true;
 
@@ -341,8 +373,11 @@ class CRDTProviderImpl implements CRDTProvider {
    *
    * Also clears pending updates since they're now captured in the full state.
    */
-  private async saveToIndexedDB(): Promise<void> {
-    if (this.destroyed) return;
+  private async saveToIndexedDB(force = false): Promise<void> {
+    if (!force && this.destroyed) return;
+
+    /* Record generation before snapshot — only clear updates that existed before this save. */
+    const gen = ++this.saveGeneration;
 
     const state = Y.encodeStateAsUpdate(this.doc);
     const stateVector = Y.encodeStateVector(this.doc);
@@ -365,7 +400,11 @@ class CRDTProviderImpl implements CRDTProvider {
     }
 
     await saveDocumentState(record);
-    await clearPendingUpdates(this.documentId);
+
+    /* Only clear pending updates if no new save was triggered while we were writing. */
+    if (gen === this.saveGeneration) {
+      await clearPendingUpdates(this.documentId);
+    }
   }
 
   // ===========================================================================
@@ -384,9 +423,12 @@ class CRDTProviderImpl implements CRDTProvider {
 
   /**
    * Attempt to persist the document to Supabase if it's dirty and online.
+   *
+   * @returns `true` if persist succeeded, `false` if skipped or failed.
    */
-  private async tryPersistToSupabase(): Promise<void> {
-    if (this.destroyed || !this._isOnline || !this._isDirty) return;
+  private tryPersistToSupabase(force = false): Promise<boolean> {
+    if (!force && this.destroyed) return Promise.resolve(false);
+    if (!this._isOnline || !this._isDirty) return Promise.resolve(false);
 
     /* Check if state has actually changed since last persist. */
     const currentStateVector = Y.encodeStateVector(this.doc);
@@ -395,34 +437,42 @@ class CRDTProviderImpl implements CRDTProvider {
       arraysEqual(currentStateVector, this.lastPersistedStateVector)
     ) {
       debugLog(`[CRDT] Document ${this.documentId}: Supabase persist skipped (not dirty)`);
-      return;
+      return Promise.resolve(false);
     }
 
     /* Guard against concurrent persists. */
     if (this.persistInProgress) {
       debugLog(`[CRDT] Document ${this.documentId}: persist already in progress, skipping`);
-      return;
+      return Promise.resolve(false);
     }
 
     this.persistInProgress = true;
-    try {
-      await persistDocument(this.documentId, this.doc);
-      this.lastPersistedStateVector = currentStateVector;
-      this._isDirty = false;
+    const promise = (async (): Promise<boolean> => {
+      try {
+        await persistDocument(this.documentId, this.doc);
+        this.lastPersistedStateVector = currentStateVector;
+        this._isDirty = false;
 
-      /* Update local record's lastPersistedAt. */
-      if (this.offlineEnabled) {
-        const existing = await loadDocumentState(this.documentId);
-        if (existing) {
-          existing.lastPersistedAt = new Date().toISOString();
-          await saveDocumentState(existing);
+        /* Update local record's lastPersistedAt. */
+        if (this.offlineEnabled) {
+          const existing = await loadDocumentState(this.documentId);
+          if (existing) {
+            existing.lastPersistedAt = new Date().toISOString();
+            await saveDocumentState(existing);
+          }
         }
+        return true;
+      } catch (e) {
+        debugWarn(`[CRDT] Document ${this.documentId}: Supabase persist failed:`, e);
+        return false;
+      } finally {
+        this.persistInProgress = false;
+        this.persistPromise = null;
       }
-    } catch (e) {
-      debugWarn(`[CRDT] Document ${this.documentId}: Supabase persist failed:`, e);
-    } finally {
-      this.persistInProgress = false;
-    }
+    })();
+
+    this.persistPromise = promise.then(() => {});
+    return promise;
   }
 
   // ===========================================================================
@@ -450,47 +500,60 @@ class CRDTProviderImpl implements CRDTProvider {
    * and persists the merged state to Supabase.
    */
   private async handleReconnect(): Promise<void> {
-    debugLog(`[CRDT] Document ${this.documentId}: reconnecting after coming online`);
+    /* Guard against concurrent reconnects. */
+    if (this.reconnectInProgress) {
+      debugLog(`[CRDT] Document ${this.documentId}: reconnect already in progress, skipping`);
+      return;
+    }
+    this.reconnectInProgress = true;
 
-    /* Merge any pending updates accumulated while offline. */
-    const pendingUpdates = await loadPendingUpdates(this.documentId);
-    if (pendingUpdates.length > 0) {
+    try {
+      debugLog(`[CRDT] Document ${this.documentId}: reconnecting after coming online`);
+
+      /* Merge any pending updates accumulated while offline.
+       * Use 'load' origin so the update handler doesn't re-queue or re-broadcast them. */
+      const pendingUpdates = await loadPendingUpdates(this.documentId);
+      if (pendingUpdates.length > 0) {
+        debugLog(
+          `[CRDT] Document ${this.documentId}: merging ${pendingUpdates.length} pending updates after reconnect`
+        );
+        const merged = Y.mergeUpdates(pendingUpdates.map((p) => p.update));
+        Y.applyUpdate(this.doc, merged, 'load');
+      }
+
+      /* Rejoin Broadcast channel. */
+      if (this.channel) {
+        await this.channel.leave();
+      }
+      await this.joinChannel();
+
+      /* Run sync protocol. */
+      if (this.channel) {
+        const peersResponded = await this.channel.waitForSync();
+        if (!peersResponded) {
+          await this.fetchAndMergeRemoteState();
+        }
+      }
+
+      /* Broadcast our pending updates to peers. */
+      const state = Y.encodeStateAsUpdate(this.doc);
+      this.channel?.broadcastUpdate(state);
+
+      /* Immediately persist merged state to Supabase. */
+      this._isDirty = true;
+      const persisted = await this.tryPersistToSupabase();
+
+      /* Only clear pending updates if persist succeeded. */
+      if (persisted) {
+        await clearPendingUpdates(this.documentId);
+      }
+
       debugLog(
-        `[CRDT] Document ${this.documentId}: merging ${pendingUpdates.length} pending updates after reconnect`
+        `[CRDT] Document ${this.documentId}: reconnection sync complete, state size ${state.byteLength} bytes`
       );
-      for (const pending of pendingUpdates) {
-        Y.applyUpdate(this.doc, pending.update);
-      }
+    } finally {
+      this.reconnectInProgress = false;
     }
-
-    /* Rejoin Broadcast channel. */
-    if (this.channel) {
-      await this.channel.leave();
-    }
-    await this.joinChannel();
-
-    /* Run sync protocol. */
-    if (this.channel) {
-      const peersResponded = await this.channel.waitForSync();
-      if (!peersResponded) {
-        await this.fetchAndMergeRemoteState();
-      }
-    }
-
-    /* Broadcast our pending updates to peers. */
-    const state = Y.encodeStateAsUpdate(this.doc);
-    this.channel?.broadcastUpdate(state);
-
-    /* Immediately persist merged state to Supabase. */
-    this._isDirty = true;
-    await this.tryPersistToSupabase();
-
-    /* Clear pending updates (now captured in full state). */
-    await clearPendingUpdates(this.documentId);
-
-    debugLog(
-      `[CRDT] Document ${this.documentId}: reconnection sync complete, state size ${state.byteLength} bytes`
-    );
   }
 
   // ===========================================================================
@@ -532,12 +595,17 @@ class CRDTProviderImpl implements CRDTProvider {
 
     /* Save final state to IndexedDB. */
     if (this.offlineEnabled) {
-      await this.saveToIndexedDB();
+      await this.saveToIndexedDB(true);
     }
 
-    /* Persist to Supabase if online and dirty. */
+    /* Await any in-flight persist before final persist attempt. */
+    if (this.persistPromise) {
+      await this.persistPromise;
+    }
+
+    /* Persist to Supabase if online and dirty (force=true bypasses destroyed check). */
     if (this._isOnline && this._isDirty) {
-      await this.tryPersistToSupabase();
+      await this.tryPersistToSupabase(true);
     }
 
     /* Leave presence. */
@@ -609,21 +677,30 @@ export async function openDocument(
   const existing = activeProviders.get(documentId);
   if (existing) return existing;
 
+  /* If init is already in-flight for this document, await the same promise. */
+  const inflight = initPromises.get(documentId);
+  if (inflight) return inflight;
+
   /* Create and initialize a new provider. */
   const provider = new CRDTProviderImpl(documentId, pageId, options.offlineEnabled ?? false);
 
   activeProviders.set(documentId, provider);
 
-  try {
-    await provider.init(options);
-  } catch (e) {
-    /* Clean up on initialization failure. */
-    activeProviders.delete(documentId);
-    provider.doc.destroy();
-    throw e;
-  }
+  const promise = (async (): Promise<CRDTProvider> => {
+    try {
+      await provider.init(options);
+      return provider;
+    } catch (e) {
+      /* Clean up on initialization failure — use provider.destroy() to release all resources. */
+      await provider.destroy();
+      throw e;
+    } finally {
+      initPromises.delete(documentId);
+    }
+  })();
 
-  return provider;
+  initPromises.set(documentId, promise);
+  return promise;
 }
 
 /**
@@ -650,10 +727,10 @@ export async function closeAllDocuments(): Promise<void> {
   const count = activeProviders.size;
   if (count === 0) return;
 
-  debugLog(`[CRDT] All documents closed (count=${count})`);
-
   const promises = Array.from(activeProviders.values()).map((p) => p.destroy());
   await Promise.allSettled(promises);
+
+  debugLog(`[CRDT] All documents closed (count=${count})`);
 }
 
 /**
