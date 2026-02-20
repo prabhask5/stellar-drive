@@ -86,13 +86,29 @@ export async function persistDocument(documentId, doc) {
         return;
     }
     debugLog(`[CRDT] Document ${documentId}: persisting to Supabase (${state.byteLength} bytes)`);
-    const { error } = await supabase.from(config.supabaseTable).upsert({
-        page_id: provider.pageId,
+    const payload = {
         state: uint8ToBase64(state),
         state_vector: uint8ToBase64(stateVector),
         state_size: state.byteLength,
         device_id: deviceId
-    }, { onConflict: 'page_id' });
+    };
+    /* Select-then-insert/update: works whether or not the composite unique index
+     * exists yet (e.g. local dev without DATABASE_URL schema push).
+     * RLS scopes to the current user, so page_id is effectively unique per user. */
+    const { data: existing } = await supabase
+        .from(config.supabaseTable)
+        .select('id')
+        .eq('page_id', provider.pageId)
+        .maybeSingle();
+    let error;
+    if (existing) {
+        ({ error } = await supabase.from(config.supabaseTable).update(payload).eq('id', existing.id));
+    }
+    else {
+        ({ error } = await supabase
+            .from(config.supabaseTable)
+            .insert({ ...payload, page_id: provider.pageId }));
+    }
     if (error) {
         debugWarn(`[CRDT] Document ${documentId}: Supabase persist failed: ${error.message}`);
         throw error;
