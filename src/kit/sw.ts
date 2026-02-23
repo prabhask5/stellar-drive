@@ -123,6 +123,7 @@ export function pollForNewServiceWorker(options?: PollOptions): () => void {
   const maxAttempts = options?.maxAttempts ?? 60;
   let attempts = 0;
   let stopped = false;
+  let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const poll = async () => {
     /* SSR guard — service workers don't exist on the server */
@@ -147,13 +148,41 @@ export function pollForNewServiceWorker(options?: PollOptions): () => void {
 
     attempts++;
     if (attempts < maxAttempts && !stopped) {
-      setTimeout(poll, intervalMs);
+      pendingTimeout = setTimeout(poll, intervalMs);
     }
   };
+
+  /*
+   * Background tab handling — browsers throttle setTimeout to ~1/min in
+   * background tabs, so polling effectively pauses. When the tab returns
+   * to the foreground, immediately trigger a poll to catch any deployment
+   * that completed while the tab was in the background.
+   */
+  const onVisibilityChange = () => {
+    if (!stopped && document.visibilityState === 'visible') {
+      debug('log', '[SW] Tab became visible, checking for new SW');
+      /* Clear any pending throttled timeout and poll immediately */
+      if (pendingTimeout !== null) {
+        clearTimeout(pendingTimeout);
+        pendingTimeout = null;
+      }
+      poll();
+    }
+  };
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
 
   poll();
   return () => {
     stopped = true;
+    if (pendingTimeout !== null) {
+      clearTimeout(pendingTimeout);
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
   };
 }
 
