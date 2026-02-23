@@ -69,6 +69,7 @@ const SHELL_CACHE = '__SW_PREFIX__-shell-' + APP_VERSION;
 const PRECACHE_ASSETS = [
     '/manifest.json',
     '/favicon.png',
+    '/icons/favicon.svg',
     '/icon-192.png',
     '/icon-512.png',
     '/offline.html'
@@ -178,6 +179,9 @@ self.addEventListener('fetch', (event) => {
         return;
     /* Skip API routes — backend data must always be fresh */
     if (url.pathname.startsWith('/api/'))
+        return;
+    /* Skip auth routes — OAuth redirects must reach the server directly */
+    if (url.pathname.startsWith('/auth/'))
         return;
     /* ── Navigation Requests (HTML pages) ───────────────────────────── */
     if (event.request.mode === 'navigate') {
@@ -339,7 +343,7 @@ async function handleStaticAsset(request) {
     if (cached) {
         return cached;
     }
-    /* Not cached — fetch and store */
+    /* Not cached — fetch and store (only cache successful responses) */
     try {
         const response = await fetch(request);
         if (response.ok) {
