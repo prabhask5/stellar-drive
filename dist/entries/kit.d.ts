@@ -9,8 +9,8 @@
  * This entry point is intended for use **only** within SvelteKit projects and
  * should not be imported from plain Svelte or non-Kit environments.
  */
-export { getServerConfig, deployToVercel, createValidateHandler } from '../kit/server.js';
-export type { DeployConfig, DeployResult, ServerConfig } from '../kit/server.js';
+export { getServerConfig, deployToVercel, createValidateHandler, createServerSupabaseClient } from '../kit/server.js';
+export type { DeployConfig, DeployResult, ServerConfig, SupabaseClient } from '../kit/server.js';
 export { resolveRootLayout, resolveSetupAccess } from '../kit/loads.js';
 export type { RootLayoutData, SetupAccessData } from '../kit/loads.js';
 export { handleEmailConfirmation, broadcastAuthConfirmed } from '../kit/confirm.js';

@@ -357,7 +357,7 @@ export type { SQLGenerationOptions, TypeScriptGenerationOptions } from './schema
 // Re-export the Supabase `Session` type so consumers do not need a direct
 // `@supabase/supabase-js` dependency to type-check session objects.
 
-export type { Session } from '@supabase/supabase-js';
+export type { Session, SupabaseClient } from '@supabase/supabase-js';
 
 // =============================================================================
 //  Supabase Credential Validation (Server-Side)

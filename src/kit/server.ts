@@ -30,6 +30,10 @@
  * @see {@link validateSupabaseCredentials} in `supabase/validate.ts`
  */
 
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+
+export type { SupabaseClient } from '@supabase/supabase-js';
+
 // =============================================================================
 //  TYPES
 // =============================================================================
@@ -400,6 +404,31 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
  *
  * @see {@link validateSupabaseCredentials} in `supabase/validate.ts`
  */
+/**
+ * Creates a server-side Supabase client using environment variables.
+ *
+ * Reads `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
+ * from `process.env` via `getServerConfig()` and returns a fresh
+ * `SupabaseClient` instance. Intended for use in SvelteKit server hooks
+ * or API routes where the browser-side lazy singleton is unavailable.
+ *
+ * @returns A `SupabaseClient` instance, or `null` if credentials are not configured.
+ *
+ * @example
+ * ```ts
+ * // In hooks.server.ts
+ * import { createServerSupabaseClient } from 'stellar-drive/kit';
+ * const supabase = createServerSupabaseClient();
+ * ```
+ */
+export function createServerSupabaseClient(): SupabaseClient | null {
+  const config = getServerConfig();
+  if (!config.configured || !config.supabaseUrl || !config.supabasePublishableKey) {
+    return null;
+  }
+  return createClient(config.supabaseUrl, config.supabasePublishableKey);
+}
+
 export function createValidateHandler() {
   return async ({ request }: { request: Request }): Promise<Response> => {
     /* Dynamic import keeps the Supabase client out of the module graph
