@@ -1313,7 +1313,8 @@ SvelteKit-specific utilities for server routes, layout load functions, and PWA l
 ### Server Helpers
 
 - **`getServerConfig()`** -- Reads server-side Supabase credentials from environment variables. Returns a `ServerConfig` object.
-- **`deployToVercel(config: DeployConfig)`** -- Upserts Supabase env vars on Vercel and triggers a production deployment. Returns `DeployResult`.
+- **`createServerSupabaseClient(prefix?)`** -- Creates a server-side Supabase client from environment variables. When `prefix` is provided (e.g. `'switchboard'`), returns a Proxy that auto-prefixes all `.from()` calls (`.from('users')` → `.from('switchboard_users')`). Returns `SupabaseClient | null`.
+- **`deployToVercel(config: DeployConfig)`** -- Upserts Supabase env vars on Vercel and triggers a production deployment. `DeployConfig` accepts an optional `prefix` field that sets `PUBLIC_APP_PREFIX` as a Vercel env var. Returns `DeployResult`.
 - **`createValidateHandler()`** -- Factory for a SvelteKit POST handler that validates Supabase credentials during initial setup.
 
 ### Layout Load Functions

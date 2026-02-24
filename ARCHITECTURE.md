@@ -1894,7 +1894,9 @@ When debug mode is disabled, all `debugLog()`, `debugWarn()`, and `debugError()`
 
 **`getServerConfig()`**: Returns runtime Supabase config for client hydration. Reads from environment variables.
 
-**`deployToVercel(request)`**: Deploys environment variables to a Vercel project. Used by the `/setup` wizard.
+**`createServerSupabaseClient(prefix?)`**: Creates a server-side Supabase client from environment variables. When a `prefix` is provided (e.g. `'switchboard'`), returns a Proxy that transparently prefixes all `.from()` calls — `.from('users')` becomes `.from('switchboard_users')`. This matches the client-side auto-prefixing done by `resolveSupabaseName()` in `config.ts`.
+
+**`deployToVercel(config)`**: Deploys environment variables to a Vercel project. Used by the `/setup` wizard. Accepts an optional `prefix` field in `DeployConfig` — when set, also writes `PUBLIC_APP_PREFIX` to Vercel env vars.
 
 **`createValidateHandler()`**: Creates a request handler that validates Supabase credentials and schema against the database.
 

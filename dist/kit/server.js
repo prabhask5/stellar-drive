@@ -200,6 +200,9 @@ export async function deployToVercel(config) {
         // -------------------------------------------------------------------------
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_URL', config.supabaseUrl);
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY', config.supabasePublishableKey);
+        if (config.prefix) {
+            await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_PREFIX', config.prefix);
+        }
         // -------------------------------------------------------------------------
         //  Phase 2 — Trigger production redeployment
         // -------------------------------------------------------------------------
@@ -285,21 +288,39 @@ export async function deployToVercel(config) {
  * `SupabaseClient` instance. Intended for use in SvelteKit server hooks
  * or API routes where the browser-side lazy singleton is unavailable.
  *
+ * When a `prefix` is provided, the returned client is wrapped in a Proxy
+ * that transparently prefixes all `.from()` calls. For example, with
+ * `prefix = 'switchboard'`, `.from('gmail_sync_state')` becomes
+ * `.from('switchboard_gmail_sync_state')`.
+ *
+ * @param prefix - Optional table name prefix (e.g. `'switchboard'`).
+ *
  * @returns A `SupabaseClient` instance, or `null` if credentials are not configured.
  *
  * @example
  * ```ts
  * // In hooks.server.ts
  * import { createServerSupabaseClient } from 'stellar-drive/kit';
- * const supabase = createServerSupabaseClient();
+ * const supabase = createServerSupabaseClient('switchboard');
+ * // supabase.from('users') → queries 'switchboard_users'
  * ```
  */
-export function createServerSupabaseClient() {
+export function createServerSupabaseClient(prefix) {
     const config = getServerConfig();
     if (!config.configured || !config.supabaseUrl || !config.supabasePublishableKey) {
         return null;
     }
-    return createClient(config.supabaseUrl, config.supabasePublishableKey);
+    const client = createClient(config.supabaseUrl, config.supabasePublishableKey);
+    if (!prefix)
+        return client;
+    return new Proxy(client, {
+        get(target, prop, receiver) {
+            if (prop === 'from') {
+                return (table) => target.from(`${prefix}_${table}`);
+            }
+            return Reflect.get(target, prop, receiver);
+        }
+    });
 }
 export function createValidateHandler() {
     return async ({ request }) => {

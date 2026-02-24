@@ -79,6 +79,9 @@ export interface DeployConfig {
 
   /** The Supabase publishable key for client-side access. */
   supabasePublishableKey: string;
+
+  /** Optional table name prefix (e.g. `'switchboard'`). Sets `PUBLIC_APP_PREFIX` env var on Vercel. */
+  prefix?: string;
 }
 
 /**
@@ -321,6 +324,10 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
       config.supabasePublishableKey
     );
 
+    if (config.prefix) {
+      await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_PREFIX', config.prefix);
+    }
+
     // -------------------------------------------------------------------------
     //  Phase 2 — Trigger production redeployment
     // -------------------------------------------------------------------------
@@ -412,21 +419,40 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
  * `SupabaseClient` instance. Intended for use in SvelteKit server hooks
  * or API routes where the browser-side lazy singleton is unavailable.
  *
+ * When a `prefix` is provided, the returned client is wrapped in a Proxy
+ * that transparently prefixes all `.from()` calls. For example, with
+ * `prefix = 'switchboard'`, `.from('gmail_sync_state')` becomes
+ * `.from('switchboard_gmail_sync_state')`.
+ *
+ * @param prefix - Optional table name prefix (e.g. `'switchboard'`).
+ *
  * @returns A `SupabaseClient` instance, or `null` if credentials are not configured.
  *
  * @example
  * ```ts
  * // In hooks.server.ts
  * import { createServerSupabaseClient } from 'stellar-drive/kit';
- * const supabase = createServerSupabaseClient();
+ * const supabase = createServerSupabaseClient('switchboard');
+ * // supabase.from('users') → queries 'switchboard_users'
  * ```
  */
-export function createServerSupabaseClient(): SupabaseClient | null {
+export function createServerSupabaseClient(prefix?: string): SupabaseClient | null {
   const config = getServerConfig();
   if (!config.configured || !config.supabaseUrl || !config.supabasePublishableKey) {
     return null;
   }
-  return createClient(config.supabaseUrl, config.supabasePublishableKey);
+  const client = createClient(config.supabaseUrl, config.supabasePublishableKey);
+
+  if (!prefix) return client;
+
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      if (prop === 'from') {
+        return (table: string) => target.from(`${prefix}_${table}`);
+      }
+      return Reflect.get(target, prop, receiver);
+    }
+  }) as SupabaseClient;
 }
 
 export function createValidateHandler() {

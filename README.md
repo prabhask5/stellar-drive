@@ -598,7 +598,7 @@ These require `svelte ^5.0.0` and `@sveltejs/kit` as peer dependencies.
 | Export | Description |
 |---|---|
 | Layout load functions | `resolveAuthState` integration for `+layout.ts` |
-| Server handlers | Factory functions for API routes (`getServerConfig`, `createValidateHandler`, `deployToVercel`) |
+| Server handlers | Factory functions for API routes (`getServerConfig`, `createServerSupabaseClient(prefix?)`, `createValidateHandler`, `deployToVercel`) |
 | Email confirmation | `handleEmailConfirmation()`, `broadcastAuthConfirmed()` |
 | SW lifecycle | `monitorSwLifecycle()`, `handleSwUpdate()`, `pollForNewServiceWorker()` |
 | Auth hydration | `hydrateAuthState()` for `+layout.svelte` |

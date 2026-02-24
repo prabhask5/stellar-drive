@@ -46,6 +46,8 @@ export interface DeployConfig {
     supabaseUrl: string;
     /** The Supabase publishable key for client-side access. */
     supabasePublishableKey: string;
+    /** Optional table name prefix (e.g. `'switchboard'`). Sets `PUBLIC_APP_PREFIX` env var on Vercel. */
+    prefix?: string;
 }
 /**
  * Result of a Vercel deployment attempt.
@@ -179,16 +181,24 @@ export declare function deployToVercel(config: DeployConfig): Promise<DeployResu
  * `SupabaseClient` instance. Intended for use in SvelteKit server hooks
  * or API routes where the browser-side lazy singleton is unavailable.
  *
+ * When a `prefix` is provided, the returned client is wrapped in a Proxy
+ * that transparently prefixes all `.from()` calls. For example, with
+ * `prefix = 'switchboard'`, `.from('gmail_sync_state')` becomes
+ * `.from('switchboard_gmail_sync_state')`.
+ *
+ * @param prefix - Optional table name prefix (e.g. `'switchboard'`).
+ *
  * @returns A `SupabaseClient` instance, or `null` if credentials are not configured.
  *
  * @example
  * ```ts
  * // In hooks.server.ts
  * import { createServerSupabaseClient } from 'stellar-drive/kit';
- * const supabase = createServerSupabaseClient();
+ * const supabase = createServerSupabaseClient('switchboard');
+ * // supabase.from('users') → queries 'switchboard_users'
  * ```
  */
-export declare function createServerSupabaseClient(): SupabaseClient | null;
+export declare function createServerSupabaseClient(prefix?: string): SupabaseClient | null;
 export declare function createValidateHandler(): ({ request }: {
     request: Request;
 }) => Promise<Response>;
