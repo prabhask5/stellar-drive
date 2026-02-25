@@ -138,11 +138,19 @@ export declare function deployToVercel(config: DeployConfig): Promise<DeployResu
  * @returns An async handler function compatible with SvelteKit's
  *          `RequestHandler` signature for POST endpoints.
  *
+ * The handler includes built-in security guards:
+ *   1. Blocks requests if `PUBLIC_SUPABASE_URL` is already set (app configured)
+ *   2. Validates the Origin header to prevent cross-origin CSRF attacks
+ *
+ * @returns An async handler function compatible with SvelteKit's
+ *          `RequestHandler` signature for POST endpoints.
+ *
  * @example
  * ```ts
- * // In /api/validate-supabase/+server.ts
- * import { createValidateHandler } from 'stellar-drive/kit/server';
- * export const POST = createValidateHandler();
+ * // In /api/setup/validate/+server.ts
+ * import { createValidateHandler } from 'stellar-drive/kit';
+ * import type { RequestHandler } from './$types';
+ * export const POST: RequestHandler = createValidateHandler();
  * ```
  *
  * @see {@link validateSupabaseCredentials} in `supabase/validate.ts`
@@ -188,7 +196,36 @@ export declare function createServerSupabaseClient(prefix?: string): SupabaseCli
  * ```
  */
 export declare function createConfigHandler(): () => Promise<Response>;
-export declare function createValidateHandler(): ({ request }: {
+export declare function createValidateHandler(): ({ request, url }: {
     request: Request;
+    url: URL;
+}) => Promise<Response>;
+/**
+ * Factory returning a SvelteKit POST handler that deploys Supabase
+ * credentials to Vercel environment variables and triggers a redeployment.
+ *
+ * The handler includes built-in security guards:
+ *   1. Blocks requests if `PUBLIC_SUPABASE_URL` is already set (app configured)
+ *   2. Validates the Origin header to prevent cross-origin CSRF attacks
+ *
+ * @param options - Optional configuration.
+ * @param options.prefix - Table name prefix (e.g. `'stellar'`). Sets `PUBLIC_APP_PREFIX` on Vercel.
+ *
+ * @returns An async handler function compatible with SvelteKit's
+ *          `RequestHandler` signature for POST endpoints.
+ *
+ * @example
+ * ```ts
+ * // In /api/setup/deploy/+server.ts
+ * import { createDeployHandler } from 'stellar-drive/kit';
+ * import type { RequestHandler } from './$types';
+ * export const POST: RequestHandler = createDeployHandler({ prefix: 'myapp' });
+ * ```
+ */
+export declare function createDeployHandler(options?: {
+    prefix?: string;
+}): ({ request, url }: {
+    request: Request;
+    url: URL;
 }) => Promise<Response>;
 //# sourceMappingURL=server.d.ts.map

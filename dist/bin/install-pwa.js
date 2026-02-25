@@ -1445,6 +1445,7 @@ import { goto } from '$app/navigation';
 import { initEngine, supabase } from 'stellar-drive';
 import { lockSingleUser } from 'stellar-drive/auth';
 import { resolveRootLayout } from 'stellar-drive/kit';
+import { isSafeRedirect } from 'stellar-drive/utils';
 import { schema } from '$lib/schema';
 import { demoConfig } from '$lib/demo/config';
 import type { RootLayoutData } from 'stellar-drive/kit';
@@ -1517,13 +1518,13 @@ export const load: LayoutLoad = async ({ url }): Promise<RootLayoutData> => {
     const result = await resolveRootLayout();
 
     if (result.authMode === 'none') {
-      if (!result.serverConfigured && !url.pathname.startsWith('/setup')) {
+      if (!result.serverConfigured && !url.pathname.startsWith('/setup') && !url.pathname.startsWith('/policy')) {
         redirect(307, '/setup');
       } else if (result.serverConfigured) {
         const isPublicRoute = PUBLIC_ROUTES.some(r => url.pathname.startsWith(r));
         if (!isPublicRoute) {
           const returnUrl = url.pathname + url.search;
-          const loginUrl = returnUrl && returnUrl !== '/'
+          const loginUrl = returnUrl && returnUrl !== '/' && isSafeRedirect(returnUrl)
             ? \`/login?redirect=\${encodeURIComponent(returnUrl)}\`
             : '/login';
           redirect(307, loginUrl);
@@ -2697,6 +2698,7 @@ function generateLoginPage(opts) {
     linkSingleUserDevice
   } from 'stellar-drive/auth';
   import { sendDeviceVerification, isDemoMode } from 'stellar-drive';
+  import { isSafeRedirect } from 'stellar-drive/utils';
 
   // ==========================================================================
   //                        LAYOUT / PAGE DATA
@@ -2705,8 +2707,12 @@ function generateLoginPage(opts) {
   /** Whether this device has a linked single-user account (derived from IndexedDB, not layout data) */
   let deviceLinked = $state(false);
 
-  /** Post-login redirect URL extracted from \`?redirect=\` query param */
-  const redirectUrl = $derived($page.url.searchParams.get('redirect') || '/');
+  /** Post-login redirect URL — validated to prevent open-redirect attacks */
+  const redirectUrl = $derived.by(() => {
+    const param = $page.url.searchParams.get('redirect');
+    if (param && isSafeRedirect(param)) return param;
+    return '/';
+  });
 
   // ==========================================================================
   //                          SHARED UI STATE
@@ -3542,24 +3548,18 @@ function generateConfirmPage(opts) {
  */
 function generateConfigServer() {
     return `/**
- * Config API Endpoint — \`GET /api/config\`
+ * @fileoverview Config API endpoint.
  *
- * Returns the runtime configuration object (Supabase URL, publishable key, app
- * settings) that the client fetches on first load via \`initConfig()\`.
+ * Delegates entirely to stellar-drive's \`createConfigHandler()\` which
+ * reads Supabase env vars and returns them with security headers
+ * (Cache-Control, X-Content-Type-Options).
  */
 
-import { json } from '@sveltejs/kit';
-import { getServerConfig } from 'stellar-drive/kit';
+import { createConfigHandler } from 'stellar-drive/kit';
 import type { RequestHandler } from './$types';
 
-/**
- * Serve the runtime config as JSON.
- *
- * @returns A JSON response containing the server-side config object.
- */
-export const GET: RequestHandler = async () => {
-  return json(getServerConfig());
-};
+/** GET /api/config — Retrieve the current Supabase configuration. */
+export const GET: RequestHandler = createConfigHandler();
 `;
 }
 /**
@@ -3567,51 +3567,20 @@ export const GET: RequestHandler = async () => {
  *
  * @returns The TypeScript source for `src/routes/api/setup/deploy/+server.ts`.
  */
-function generateDeployServer() {
+function generateDeployServer(opts) {
     return `/**
- * Vercel Deploy API Endpoint — \`POST /api/setup/deploy\`
+ * @fileoverview Vercel deploy endpoint.
  *
- * Accepts Supabase credentials and a Vercel token, then sets the
- * corresponding environment variables on the Vercel project and triggers
- * a redeployment so the new config takes effect.
+ * Delegates entirely to stellar-drive's \`createDeployHandler()\` which
+ * deploys Supabase credentials to Vercel and includes built-in security
+ * guards (already-configured check + CSRF origin validation).
  */
 
-import { json } from '@sveltejs/kit';
-import { deployToVercel } from 'stellar-drive/kit';
+import { createDeployHandler } from 'stellar-drive/kit';
 import type { RequestHandler } from './$types';
 
-/**
- * Deploy Supabase credentials to Vercel environment variables.
- *
- * @param params - SvelteKit request event.
- * @returns JSON result with success/failure and optional error message.
- */
-export const POST: RequestHandler = async ({ request }) => {
-  /* ── Parse and validate request body ── */
-  const { supabaseUrl, supabasePublishableKey, vercelToken } = await request.json();
-
-  if (!supabaseUrl || !supabasePublishableKey || !vercelToken) {
-    return json(
-      { success: false, error: 'Supabase URL, Publishable Key, and Vercel Token are required' },
-      { status: 400 }
-    );
-  }
-
-  /* ── Ensure we're running on Vercel ── */
-  const projectId = process.env.VERCEL_PROJECT_ID;
-  if (!projectId) {
-    return json(
-      { success: false, error: 'VERCEL_PROJECT_ID not found. This endpoint only works on Vercel.' },
-      { status: 400 }
-    );
-  }
-
-  /* ── Delegate to engine ── */
-  const result = await deployToVercel({
-    vercelToken, projectId, supabaseUrl, supabasePublishableKey
-  });
-  return json(result);
-};
+/** POST /api/setup/deploy — Deploy Supabase config to Vercel. */
+export const POST: RequestHandler = createDeployHandler({ prefix: '${opts.prefix}' });
 `;
 }
 /**
@@ -5266,7 +5235,7 @@ export async function run() {
                 ['src/routes/login/+page.svelte', generateLoginPage(opts)],
                 ['src/routes/confirm/+page.svelte', generateConfirmPage(opts)],
                 ['src/routes/api/config/+server.ts', generateConfigServer()],
-                ['src/routes/api/setup/deploy/+server.ts', generateDeployServer()],
+                ['src/routes/api/setup/deploy/+server.ts', generateDeployServer(opts)],
                 ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
                 ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
                 ['src/routes/profile/+page.svelte', generateProfilePage(opts)],

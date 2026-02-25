@@ -411,11 +411,19 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
  * @returns An async handler function compatible with SvelteKit's
  *          `RequestHandler` signature for POST endpoints.
  *
+ * The handler includes built-in security guards:
+ *   1. Blocks requests if `PUBLIC_SUPABASE_URL` is already set (app configured)
+ *   2. Validates the Origin header to prevent cross-origin CSRF attacks
+ *
+ * @returns An async handler function compatible with SvelteKit's
+ *          `RequestHandler` signature for POST endpoints.
+ *
  * @example
  * ```ts
- * // In /api/validate-supabase/+server.ts
- * import { createValidateHandler } from 'stellar-drive/kit/server';
- * export const POST = createValidateHandler();
+ * // In /api/setup/validate/+server.ts
+ * import { createValidateHandler } from 'stellar-drive/kit';
+ * import type { RequestHandler } from './$types';
+ * export const POST: RequestHandler = createValidateHandler();
  * ```
  *
  * @see {@link validateSupabaseCredentials} in `supabase/validate.ts`
@@ -487,7 +495,24 @@ export function createConfigHandler() {
 }
 
 export function createValidateHandler() {
-  return async ({ request }: { request: Request }): Promise<Response> => {
+  return async ({ request, url }: { request: Request; url: URL }): Promise<Response> => {
+    /* ── Guard: reject if app is already configured ──── */
+    if (process.env.PUBLIC_SUPABASE_URL) {
+      return new Response(JSON.stringify({ valid: false, error: 'App is already configured' }), {
+        status: 403,
+        headers: SECURITY_HEADERS
+      });
+    }
+
+    /* ── Guard: validate Origin header (CSRF protection) ──── */
+    const origin = request.headers.get('origin');
+    if (origin && origin !== url.origin) {
+      return new Response(JSON.stringify({ valid: false, error: 'Invalid origin' }), {
+        status: 403,
+        headers: SECURITY_HEADERS
+      });
+    }
+
     /* Dynamic import keeps the Supabase client out of the module graph
        until this handler is actually invoked — reduces cold start time
        for routes that don't need validation. */
@@ -512,6 +537,95 @@ export function createValidateHandler() {
         JSON.stringify({ valid: false, error: `Could not connect to Supabase: ${message}` }),
         { headers: SECURITY_HEADERS }
       );
+    }
+  };
+}
+
+/**
+ * Factory returning a SvelteKit POST handler that deploys Supabase
+ * credentials to Vercel environment variables and triggers a redeployment.
+ *
+ * The handler includes built-in security guards:
+ *   1. Blocks requests if `PUBLIC_SUPABASE_URL` is already set (app configured)
+ *   2. Validates the Origin header to prevent cross-origin CSRF attacks
+ *
+ * @param options - Optional configuration.
+ * @param options.prefix - Table name prefix (e.g. `'stellar'`). Sets `PUBLIC_APP_PREFIX` on Vercel.
+ *
+ * @returns An async handler function compatible with SvelteKit's
+ *          `RequestHandler` signature for POST endpoints.
+ *
+ * @example
+ * ```ts
+ * // In /api/setup/deploy/+server.ts
+ * import { createDeployHandler } from 'stellar-drive/kit';
+ * import type { RequestHandler } from './$types';
+ * export const POST: RequestHandler = createDeployHandler({ prefix: 'myapp' });
+ * ```
+ */
+export function createDeployHandler(options?: { prefix?: string }) {
+  return async ({ request, url }: { request: Request; url: URL }): Promise<Response> => {
+    /* ── Guard: reject if app is already configured ──── */
+    if (process.env.PUBLIC_SUPABASE_URL) {
+      return new Response(JSON.stringify({ success: false, error: 'App is already configured' }), {
+        status: 403,
+        headers: SECURITY_HEADERS
+      });
+    }
+
+    /* ── Guard: validate Origin header (CSRF protection) ──── */
+    const origin = request.headers.get('origin');
+    if (origin && origin !== url.origin) {
+      return new Response(JSON.stringify({ success: false, error: 'Invalid origin' }), {
+        status: 403,
+        headers: SECURITY_HEADERS
+      });
+    }
+
+    /* ── Parse and validate request body ──── */
+    try {
+      const { supabaseUrl, supabasePublishableKey, vercelToken } = await request.json();
+
+      if (!supabaseUrl || !supabasePublishableKey || !vercelToken) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Supabase URL, Publishable Key, and Vercel Token are required'
+          }),
+          { status: 400, headers: SECURITY_HEADERS }
+        );
+      }
+
+      /* ── Ensure we're running on Vercel ──── */
+      const projectId = process.env.VERCEL_PROJECT_ID;
+      if (!projectId) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'VERCEL_PROJECT_ID not found. This endpoint only works on Vercel.'
+          }),
+          { status: 400, headers: SECURITY_HEADERS }
+        );
+      }
+
+      /* ── Delegate to engine — sets env vars + redeploys ──── */
+      const result = await deployToVercel({
+        vercelToken,
+        projectId,
+        supabaseUrl,
+        supabasePublishableKey,
+        prefix: options?.prefix
+      });
+
+      return new Response(JSON.stringify(result), {
+        headers: SECURITY_HEADERS
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Unknown error';
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: SECURITY_HEADERS
+      });
     }
   };
 }

@@ -110,4 +110,20 @@ export declare function calculateNewOrder<T extends {
  * ```
  */
 export declare function createAsyncGuard<Args extends unknown[], R>(fn: (...args: Args) => Promise<R>): (...args: Args) => Promise<R | undefined>;
+/**
+ * Validates that a redirect path is safe (same-origin, no protocol injection).
+ *
+ * Prevents open-redirect attacks where an attacker crafts a URL like
+ * `/login?redirect=https://evil.com` to phish users post-login.
+ *
+ * @param path - The redirect path to validate.
+ * @returns `true` if the path is a safe relative path.
+ *
+ * @example
+ * isSafeRedirect('/profile');           // → true
+ * isSafeRedirect('//evil.com');         // → false
+ * isSafeRedirect('https://evil.com');   // → false
+ * isSafeRedirect('/login?next=foo');    // → true
+ */
+export declare function isSafeRedirect(path: string): boolean;
 //# sourceMappingURL=utils.d.ts.map

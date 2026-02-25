@@ -5,7 +5,7 @@
  * unified diagnostics API. These helpers are framework-agnostic and can
  * be used anywhere in the application.
  */
-export { generateId, now, calculateNewOrder, snakeToCamel, formatBytes, createAsyncGuard } from '../utils';
+export { generateId, now, calculateNewOrder, snakeToCamel, formatBytes, createAsyncGuard, isSafeRedirect } from '../utils';
 export { debug, isDebugMode, setDebugMode } from '../debug';
 export { getDiagnostics, getSyncDiagnostics, getRealtimeDiagnostics, getQueueDiagnostics, getConflictDiagnostics, getEngineDiagnostics, getNetworkDiagnostics, getErrorDiagnostics } from '../diagnostics';
 export { generateSupabaseSQL, inferColumnType, generateTypeScript } from '../schema';

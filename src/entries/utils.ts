@@ -23,7 +23,8 @@ export {
   calculateNewOrder,
   snakeToCamel,
   formatBytes,
-  createAsyncGuard
+  createAsyncGuard,
+  isSafeRedirect
 } from '../utils';
 
 // =============================================================================

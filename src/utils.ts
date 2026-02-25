@@ -219,3 +219,26 @@ export function createAsyncGuard<Args extends unknown[], R>(
     }
   };
 }
+
+// =============================================================================
+// URL / Redirect Utilities
+// =============================================================================
+
+/**
+ * Validates that a redirect path is safe (same-origin, no protocol injection).
+ *
+ * Prevents open-redirect attacks where an attacker crafts a URL like
+ * `/login?redirect=https://evil.com` to phish users post-login.
+ *
+ * @param path - The redirect path to validate.
+ * @returns `true` if the path is a safe relative path.
+ *
+ * @example
+ * isSafeRedirect('/profile');           // → true
+ * isSafeRedirect('//evil.com');         // → false
+ * isSafeRedirect('https://evil.com');   // → false
+ * isSafeRedirect('/login?next=foo');    // → true
+ */
+export function isSafeRedirect(path: string): boolean {
+  return path.startsWith('/') && !path.startsWith('//') && !path.includes('://');
+}

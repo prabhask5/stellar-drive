@@ -24,6 +24,7 @@ export {
   deployToVercel,
   createValidateHandler,
   createConfigHandler,
+  createDeployHandler,
   createServerSupabaseClient
 } from '../kit/server.js';
 export type { DeployConfig, DeployResult, ServerConfig, SupabaseClient } from '../kit/server.js';
