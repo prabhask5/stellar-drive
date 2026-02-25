@@ -83,32 +83,6 @@ export interface ServerConfig {
     /** The Supabase publishable key, if configured. */
     supabasePublishableKey?: string;
 }
-/**
- * Reads Supabase configuration from `process.env` at runtime.
- *
- * Checks for the presence of both `PUBLIC_SUPABASE_URL` and
- * `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` environment variables.
- * Returns `{ configured: true }` with the values when both exist,
- * or `{ configured: false }` otherwise.
- *
- * This is intended for use in SvelteKit server routes (e.g. `+server.ts`)
- * to report configuration status to the client during the setup flow.
- *
- * @returns The server config status with optional Supabase credentials.
- *
- * @example
- * ```ts
- * // In /api/config/+server.ts
- * import { getServerConfig } from 'stellar-drive/kit/server';
- * export function GET() {
- *   return new Response(JSON.stringify(getServerConfig()), {
- *     headers: { 'Content-Type': 'application/json' }
- *   });
- * }
- * ```
- *
- * @see {@link ServerConfig} for the return type shape
- */
 export declare function getServerConfig(): ServerConfig;
 /**
  * Full Vercel deployment flow: upserts Supabase environment variables,
@@ -199,6 +173,21 @@ export declare function deployToVercel(config: DeployConfig): Promise<DeployResu
  * ```
  */
 export declare function createServerSupabaseClient(prefix?: string): SupabaseClient | null;
+/**
+ * Factory returning a SvelteKit GET handler that serves the server config
+ * with appropriate security headers (Cache-Control, X-Content-Type-Options).
+ *
+ * @returns An async handler function compatible with SvelteKit's
+ *          `RequestHandler` signature for GET endpoints.
+ *
+ * @example
+ * ```ts
+ * // In /api/config/+server.ts
+ * import { createConfigHandler } from 'stellar-drive/kit';
+ * export const GET = createConfigHandler();
+ * ```
+ */
+export declare function createConfigHandler(): () => Promise<Response>;
 export declare function createValidateHandler(): ({ request }: {
     request: Request;
 }) => Promise<Response>;

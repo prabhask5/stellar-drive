@@ -889,14 +889,34 @@ async function pullRemoteChanges(minCursor) {
     // Track egress for this pull
     let pullBytes = 0;
     let pullRecords = 0;
-    // Pull all tables in parallel (egress optimization: reduces wall time per sync cycle)
+    // Pull all tables in parallel with paginated fetches.
+    // Each table is fetched in pages of 1000 rows to handle edge cases where
+    // >1000 records changed since last sync (Supabase default limit is 1000).
+    const PULL_PAGE_SIZE = 1000;
+    async function pullTablePaginated(table) {
+        const allData = [];
+        let offset = 0;
+        let hasMore = true;
+        while (hasMore) {
+            const { data, error } = await supabase
+                .from(table.supabaseName)
+                .select(table.columns)
+                .gt('updated_at', lastSync)
+                .order('updated_at', { ascending: true })
+                .order('id', { ascending: true })
+                .range(offset, offset + PULL_PAGE_SIZE - 1);
+            if (error)
+                return { data: allData, error };
+            if (!data)
+                break;
+            allData.push(...data);
+            hasMore = data.length === PULL_PAGE_SIZE;
+            offset += PULL_PAGE_SIZE;
+        }
+        return { data: allData, error: null };
+    }
     // Wrapped in timeout to prevent hanging if Supabase doesn't respond
-    const results = await withTimeout(Promise.all(config.tables.map((table) => supabase
-        .from(table.supabaseName)
-        .select(table.columns)
-        .gt('updated_at', lastSync)
-        .order('updated_at', { ascending: true })
-        .order('id', { ascending: true }))), 30000, 'Pull remote changes');
+    const results = await withTimeout(Promise.all(config.tables.map(pullTablePaginated)), 30000, 'Pull remote changes');
     // Check for errors
     for (let i = 0; i < results.length; i++) {
         if (results[i].error)
@@ -1886,12 +1906,31 @@ async function hydrateFromRemote() {
     syncStatusStore.setStatus('syncing');
     syncStatusStore.setSyncMessage('Loading your data...');
     try {
-        // Pull all non-deleted records from each table (explicit columns for egress optimization)
-        // Filter deleted = false OR deleted IS NULL to exclude tombstones
-        const results = await Promise.all(config.tables.map((table) => supabase
-            .from(table.supabaseName)
-            .select(table.columns)
-            .or('deleted.is.null,deleted.eq.false')));
+        // Pull all non-deleted records from each table using paginated fetches.
+        // Each table is fetched in pages of 1000 rows to avoid Supabase's default
+        // row limit and reduce peak memory usage on large datasets.
+        const PAGE_SIZE = 1000;
+        async function fetchTablePaginated(table) {
+            const allData = [];
+            let offset = 0;
+            let hasMore = true;
+            while (hasMore) {
+                const { data, error } = await supabase
+                    .from(table.supabaseName)
+                    .select(table.columns)
+                    .or('deleted.is.null,deleted.eq.false')
+                    .range(offset, offset + PAGE_SIZE - 1);
+                if (error)
+                    return { data: allData, error };
+                if (!data)
+                    break;
+                allData.push(...data);
+                hasMore = data.length === PAGE_SIZE;
+                offset += PAGE_SIZE;
+            }
+            return { data: allData, error: null };
+        }
+        const results = await Promise.all(config.tables.map(fetchTablePaginated));
         // Check for errors
         for (const r of results) {
             if (r.error)

@@ -257,6 +257,15 @@ async function setEnvVar(
  *
  * @see {@link ServerConfig} for the return type shape
  */
+/** Standard security headers applied to all config and setup API responses. */
+const SECURITY_HEADERS: Record<string, string> = {
+  'Content-Type': 'application/json',
+  /* Prevent caching in shared proxies — config may change after setup */
+  'Cache-Control': 'private, no-cache',
+  /* Prevent MIME-type sniffing */
+  'X-Content-Type-Options': 'nosniff'
+};
+
 export function getServerConfig(): ServerConfig {
   const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
   const supabasePublishableKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
@@ -455,6 +464,28 @@ export function createServerSupabaseClient(prefix?: string): SupabaseClient | nu
   }) as SupabaseClient;
 }
 
+/**
+ * Factory returning a SvelteKit GET handler that serves the server config
+ * with appropriate security headers (Cache-Control, X-Content-Type-Options).
+ *
+ * @returns An async handler function compatible with SvelteKit's
+ *          `RequestHandler` signature for GET endpoints.
+ *
+ * @example
+ * ```ts
+ * // In /api/config/+server.ts
+ * import { createConfigHandler } from 'stellar-drive/kit';
+ * export const GET = createConfigHandler();
+ * ```
+ */
+export function createConfigHandler() {
+  return async (): Promise<Response> => {
+    return new Response(JSON.stringify(getServerConfig()), {
+      headers: SECURITY_HEADERS
+    });
+  };
+}
+
 export function createValidateHandler() {
   return async ({ request }: { request: Request }): Promise<Response> => {
     /* Dynamic import keeps the Supabase client out of the module graph
@@ -467,19 +498,19 @@ export function createValidateHandler() {
       if (!supabaseUrl || !supabasePublishableKey) {
         return new Response(
           JSON.stringify({ valid: false, error: 'Supabase URL and Publishable Key are required' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
+          { status: 400, headers: SECURITY_HEADERS }
         );
       }
 
       const result = await validateSupabaseCredentials(supabaseUrl, supabasePublishableKey);
       return new Response(JSON.stringify(result), {
-        headers: { 'Content-Type': 'application/json' }
+        headers: SECURITY_HEADERS
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Unknown error';
       return new Response(
         JSON.stringify({ valid: false, error: `Could not connect to Supabase: ${message}` }),
-        { headers: { 'Content-Type': 'application/json' } }
+        { headers: SECURITY_HEADERS }
       );
     }
   };

@@ -17,7 +17,7 @@
 // - `deployToVercel` — triggers a Vercel deployment from a server action.
 // - `createValidateHandler` — factory for a SvelteKit request handler that
 //   validates Supabase credentials during initial app setup.
-export { getServerConfig, deployToVercel, createValidateHandler, createServerSupabaseClient } from '../kit/server.js';
+export { getServerConfig, deployToVercel, createValidateHandler, createConfigHandler, createServerSupabaseClient } from '../kit/server.js';
 // =============================================================================
 //  Layout Load Functions — Route Data Resolution
 // =============================================================================

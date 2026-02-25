@@ -498,7 +498,9 @@ export async function engineGetAll(table, opts) {
     }
     /* Remote fallback only fires when the local table is completely empty.
        This handles the "first device" or "fresh install" scenario where no
-       data has been synced down yet. Skipped in demo mode (sandboxed). */
+       data has been synced down yet. Skipped in demo mode (sandboxed).
+       Uses paginated fetching (1000 rows per page) to avoid hitting
+       Supabase's default row limit and to reduce peak memory usage. */
     if (results.length === 0 &&
         opts?.remoteFallback &&
         !isDemoMode() &&
@@ -507,19 +509,32 @@ export async function engineGetAll(table, opts) {
         try {
             const supaTable = resolveSupabaseName(table);
             const columns = getTableColumns(table);
-            const { data, error } = await supabase
-                .from(supaTable)
-                .select(columns)
-                .or('deleted.is.null,deleted.eq.false');
-            if (!error && data && data.length > 0) {
-                await db.table(dexieTable).bulkPut(data);
+            const allData = [];
+            const PAGE_SIZE = 1000;
+            let offset = 0;
+            let hasMore = true;
+            /* Paginated fetch — pull PAGE_SIZE rows at a time until exhausted */
+            while (hasMore) {
+                const { data, error } = await supabase
+                    .from(supaTable)
+                    .select(columns)
+                    .or('deleted.is.null,deleted.eq.false')
+                    .range(offset, offset + PAGE_SIZE - 1);
+                if (error || !data)
+                    break;
+                allData.push(...data);
+                hasMore = data.length === PAGE_SIZE;
+                offset += PAGE_SIZE;
+            }
+            if (allData.length > 0) {
+                await db.table(dexieTable).bulkPut(allData);
                 /* If ordering was requested, re-read from Dexie to get proper index-based
                    ordering rather than relying on Supabase's default sort order. */
                 if (opts?.orderBy) {
                     results = await db.table(dexieTable).orderBy(opts.orderBy).toArray();
                 }
                 else {
-                    results = data;
+                    results = allData;
                 }
             }
         }
