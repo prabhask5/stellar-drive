@@ -22,6 +22,10 @@
  * 3. **Every write creates a pending operation** in the sync queue (outbox pattern)
  * 4. **Sync loop ships outbox to server** in the background (push phase)
  * 5. **On refresh, load local state instantly**, then run background sync (pull phase)
+ * 6. **Offline cold start**: When starting offline, the engine immediately sets
+ *    `_hasHydrated = true` (dismisses loading overlay), sets sync status to
+ *    `'offline'`, and proactively creates an offline session from cached
+ *    credentials so the user can work without interruption
  *
  * ## Sync Cycle Flow
  *

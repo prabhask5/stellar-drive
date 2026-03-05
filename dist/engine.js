@@ -22,6 +22,10 @@
  * 3. **Every write creates a pending operation** in the sync queue (outbox pattern)
  * 4. **Sync loop ships outbox to server** in the background (push phase)
  * 5. **On refresh, load local state instantly**, then run background sync (pull phase)
+ * 6. **Offline cold start**: When starting offline, the engine immediately sets
+ *    `_hasHydrated = true` (dismisses loading overlay), sets sync status to
+ *    `'offline'`, and proactively creates an offline session from cached
+ *    credentials so the user can work without interruption
  *
  * ## Sync Cycle Flow
  *
@@ -2426,6 +2430,35 @@ export async function startSyncEngine() {
     // Fixes race condition where sync engine's 'online' handler fires before auth check
     if (!navigator.onLine) {
         markOffline();
+        // Show offline status immediately on cold start (syncStatusStore.reset() above
+        // sets status to 'idle', and markOffline() doesn't touch sync status)
+        syncStatusStore.setStatus('offline');
+        syncStatusStore.setSyncMessage("You're offline. Changes will sync when reconnected.");
+        // Proactively create an offline session on cold start when already offline.
+        // The onDisconnect handler only fires on online→offline transitions, not on
+        // cold start when already offline. Mirror that logic here.
+        (async () => {
+            try {
+                const currentSession = await getSession();
+                if (!currentSession?.user?.id)
+                    return;
+                const credentials = await getOfflineCredentials();
+                if (!credentials)
+                    return;
+                if (credentials.userId !== currentSession.user.id ||
+                    credentials.email !== currentSession.user.email) {
+                    return;
+                }
+                const existingSession = await getValidOfflineSession();
+                if (!existingSession) {
+                    await createOfflineSession(credentials.userId);
+                    debugLog('[Engine] Offline session created on cold start');
+                }
+            }
+            catch (e) {
+                debugError('[Engine] Failed to create offline session on cold start:', e);
+            }
+        })();
     }
     // Handle browser 'online' event — restart realtime WebSocket subscriptions.
     //
@@ -2554,6 +2587,15 @@ export async function startSyncEngine() {
     // Initial sync: hydrate if empty, otherwise push pending
     if (navigator.onLine) {
         hydrateFromRemote().catch((e) => debugError('[SYNC] Initial hydration failed:', e));
+    }
+    else {
+        // Offline cold start: set _hasHydrated so the loading overlay dismisses.
+        // Without this, the `wasDbReset() && !hasHydrated()` condition keeps the
+        // overlay visible forever when offline after a DB reset.
+        _hasHydrated = true;
+        _hydrationAttempted = true;
+        clearDbResetFlag();
+        debugLog('[SYNC] Offline cold start — marking hydration complete for local data access');
     }
     // Run initial cleanup
     cleanupOldTombstones();

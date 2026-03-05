@@ -13,6 +13,13 @@
  *   4. If the network is unreachable (offline PWA), the cached config is used
  *      as-is — ensuring the app can boot without connectivity.
  *
+ * **Offline fast path:**
+ *   When `navigator.onLine` is `false` and a valid cached config exists,
+ *   `initConfig()` returns the cached config immediately without attempting a
+ *   network fetch. As a defense against iOS PWA environments where
+ *   `navigator.onLine` can falsely report `true`, all fetches use a 3-second
+ *   `AbortController` timeout — if the fetch hangs, the cached config is used.
+ *
  * @see {@link initConfig} for the async initialisation flow
  * @see {@link getConfig} for synchronous access after initialisation
  * @see {@link setConfig} for programmatic updates (e.g., after a setup wizard)
@@ -153,9 +160,14 @@ function saveToCache(config: AppConfig): void {
  * **Strategy:**
  *   1. Return the in-flight promise if already initialising (de-duplication).
  *   2. Try localStorage first for an instant, synchronous result.
- *   3. Fetch `/api/config` to validate / update the cached value.
- *   4. If the server says "not configured", clear any stale cache and return `null`.
- *   5. If the network is unreachable, fall back to the cached config (offline PWA).
+ *   3. **Offline fast path**: If `navigator.onLine` is `false` and a valid
+ *      cached config exists, return it immediately (no network fetch).
+ *   4. Fetch `/api/config` with a **3-second timeout** to validate / update
+ *      the cached value. The timeout defends against iOS PWA environments
+ *      where `navigator.onLine` falsely reports `true` but fetch hangs.
+ *   5. If the server says "not configured", clear any stale cache and return `null`.
+ *   6. If the network is unreachable or the fetch times out, fall back to the
+ *      cached config (offline PWA).
  *
  * @returns A promise resolving to the `AppConfig` if the app is configured,
  *          or `null` if not yet configured / unreachable.
@@ -179,9 +191,22 @@ export async function initConfig(): Promise<AppConfig | null> {
       configCache = cached;
     }
 
-    /* Fetch from server to validate/update */
+    /* Offline fast path: skip the network fetch entirely when offline and
+       cached config is available. This prevents fetch() from hanging
+       indefinitely on iOS in airplane mode. */
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline && configCache) {
+      return configCache;
+    }
+
+    /* Fetch from server to validate/update.
+       Use a 3s AbortController timeout as defense against iOS PWA environments
+       where navigator.onLine falsely reports true but the network is unreachable. */
     try {
-      const response = await fetch('/api/config');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch('/api/config', { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (response.ok) {
         const serverConfig = await response.json();
         if (serverConfig.configured) {
@@ -201,7 +226,7 @@ export async function initConfig(): Promise<AppConfig | null> {
         }
       }
     } catch {
-      /* Network error — use cached config if available (offline PWA support) */
+      /* Network error or timeout — use cached config if available (offline PWA support) */
       if (configCache) {
         return configCache;
       }

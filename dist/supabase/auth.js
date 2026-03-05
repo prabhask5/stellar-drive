@@ -7,9 +7,11 @@
  * - **Sign-out & teardown**: Full 10-step teardown sequence to ensure no stale
  *   data leaks across sessions.
  *
- * - **Session management**: `getSession()` falls back to localStorage when the
- *   device is offline, ensuring the app can still render authenticated views
- *   with stale-but-usable session data.
+ * - **Session management**: `getSession()` uses an offline-first strategy —
+ *   when `navigator.onLine` is `false`, it goes straight to localStorage via
+ *   `getSessionFromStorage()` without calling the Supabase SDK (which may
+ *   trigger a token refresh that hangs in airplane mode). When online, the
+ *   normal SDK path is used with localStorage as a fallback on error.
  *
  * - **Profile CRUD**: Read and update user profile metadata on Supabase and
  *   in the offline credential cache.
@@ -36,7 +38,7 @@ import { supabase } from './client';
 import { clearOfflineCredentials, updateOfflineCredentialsProfile } from '../auth/offlineCredentials';
 import { clearOfflineSession } from '../auth/offlineSession';
 import { resetLoginGuard } from '../auth/loginGuard';
-import { debugWarn, debugError } from '../debug';
+import { debugLog, debugWarn, debugError } from '../debug';
 import { getEngineConfig } from '../config';
 import { syncStatusStore } from '../stores/sync';
 import { authState } from '../stores/authState';
@@ -170,15 +172,19 @@ export async function signOut(options) {
 /**
  * Get the current Supabase session.
  *
- * When the device is **online**, this delegates to `supabase.auth.getSession()`
- * which may trigger a token refresh if the access token is close to expiry.
+ * Uses an **offline-first** strategy:
+ * - When `navigator.onLine` is `false`, goes straight to localStorage via
+ *   {@link getSessionFromStorage} without calling the Supabase SDK. This
+ *   prevents `supabase.auth.getSession()` from triggering a token refresh
+ *   that hangs indefinitely in airplane mode (especially on iOS PWA).
+ * - When online, delegates to `supabase.auth.getSession()` which may trigger
+ *   a token refresh if the access token is close to expiry.
+ * - If the SDK call fails with a corrupted-session error, falls back to
+ *   localStorage.
  *
- * When the device is **offline**, or if the Supabase call fails with a
- * corrupted-session error, this falls back to reading the session directly
- * from localStorage via {@link getSessionFromStorage}. The returned session
- * may be expired, but callers can use {@link isSessionExpired} to check and
- * should handle offline mode appropriately (e.g. show cached data, queue
- * mutations for later sync).
+ * The returned session may be expired when offline, but callers can use
+ * {@link isSessionExpired} to check and should handle offline mode
+ * appropriately (e.g. show cached data, queue mutations for later sync).
  *
  * @returns The current `Session` object, or `null` if no valid session exists.
  *
@@ -198,16 +204,17 @@ export async function getSession() {
     if (isDemoMode())
         return null;
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    /* Offline fast path: skip the SDK call entirely when offline to prevent
+       supabase.auth.getSession() from triggering a token refresh that hangs
+       in airplane mode. Go straight to localStorage. */
+    if (isOffline) {
+        debugLog('[Auth] Offline - reading session from localStorage directly');
+        return getSessionFromStorage();
+    }
     try {
         const { data, error } = await supabase.auth.getSession();
         if (error) {
             debugError('[Auth] getSession error:', error.message);
-            // If offline and we got an error, don't clear session - it might just be a network issue
-            if (isOffline) {
-                debugWarn('[Auth] Offline - keeping session despite error');
-                // Try to get session from localStorage directly
-                return getSessionFromStorage();
-            }
             /* Detect corrupted session data (e.g. "can't access property 'hash'
                of undefined") which can occur when localStorage is partially written.
                Signing out clears the corrupt state so subsequent calls succeed. */
@@ -221,11 +228,6 @@ export async function getSession() {
     }
     catch (e) {
         debugError('[Auth] Unexpected error getting session:', e);
-        // If offline, don't clear anything - try to get from storage
-        if (isOffline) {
-            debugWarn('[Auth] Offline - attempting to get session from storage');
-            return getSessionFromStorage();
-        }
         // Attempt to clear any corrupted state when online
         try {
             await supabase.auth.signOut();
@@ -240,10 +242,10 @@ export async function getSession() {
  * Read the session directly from localStorage, bypassing Supabase's
  * built-in token refresh logic.
  *
- * This is used as a **fallback** when the device is offline and the normal
- * `supabase.auth.getSession()` call fails. The returned session may be
- * expired, but it still contains the user identity, which is sufficient for
- * rendering cached offline views.
+ * Used as the **primary** session source when the device is offline (see
+ * {@link getSession}'s offline fast path) and as a fallback when the SDK
+ * call fails. The returned session may be expired, but it still contains
+ * the user identity, which is sufficient for rendering cached offline views.
  *
  * Supabase stores its auth token in localStorage under a key matching the
  * pattern `sb-{project-ref}-auth-token`. The internal structure has changed
@@ -252,7 +254,7 @@ export async function getSession() {
  *
  * @returns The cached `Session`, or `null` if nothing usable is found.
  */
-function getSessionFromStorage() {
+export function getSessionFromStorage() {
     try {
         // Supabase stores session in localStorage with key pattern: sb-{project-ref}-auth-token
         const keys = Object.keys(localStorage);

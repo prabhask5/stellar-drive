@@ -7,9 +7,11 @@
  * - **Sign-out & teardown**: Full 10-step teardown sequence to ensure no stale
  *   data leaks across sessions.
  *
- * - **Session management**: `getSession()` falls back to localStorage when the
- *   device is offline, ensuring the app can still render authenticated views
- *   with stale-but-usable session data.
+ * - **Session management**: `getSession()` uses an offline-first strategy —
+ *   when `navigator.onLine` is `false`, it goes straight to localStorage via
+ *   `getSessionFromStorage()` without calling the Supabase SDK (which may
+ *   trigger a token refresh that hangs in airplane mode). When online, the
+ *   normal SDK path is used with localStorage as a fallback on error.
  *
  * - **Profile CRUD**: Read and update user profile metadata on Supabase and
  *   in the offline credential cache.
@@ -75,15 +77,19 @@ export declare function signOut(options?: {
 /**
  * Get the current Supabase session.
  *
- * When the device is **online**, this delegates to `supabase.auth.getSession()`
- * which may trigger a token refresh if the access token is close to expiry.
+ * Uses an **offline-first** strategy:
+ * - When `navigator.onLine` is `false`, goes straight to localStorage via
+ *   {@link getSessionFromStorage} without calling the Supabase SDK. This
+ *   prevents `supabase.auth.getSession()` from triggering a token refresh
+ *   that hangs indefinitely in airplane mode (especially on iOS PWA).
+ * - When online, delegates to `supabase.auth.getSession()` which may trigger
+ *   a token refresh if the access token is close to expiry.
+ * - If the SDK call fails with a corrupted-session error, falls back to
+ *   localStorage.
  *
- * When the device is **offline**, or if the Supabase call fails with a
- * corrupted-session error, this falls back to reading the session directly
- * from localStorage via {@link getSessionFromStorage}. The returned session
- * may be expired, but callers can use {@link isSessionExpired} to check and
- * should handle offline mode appropriately (e.g. show cached data, queue
- * mutations for later sync).
+ * The returned session may be expired when offline, but callers can use
+ * {@link isSessionExpired} to check and should handle offline mode
+ * appropriately (e.g. show cached data, queue mutations for later sync).
  *
  * @returns The current `Session` object, or `null` if no valid session exists.
  *
@@ -100,6 +106,23 @@ export declare function signOut(options?: {
  * @see {@link getValidSession} — combined convenience wrapper
  */
 export declare function getSession(): Promise<Session | null>;
+/**
+ * Read the session directly from localStorage, bypassing Supabase's
+ * built-in token refresh logic.
+ *
+ * Used as the **primary** session source when the device is offline (see
+ * {@link getSession}'s offline fast path) and as a fallback when the SDK
+ * call fails. The returned session may be expired, but it still contains
+ * the user identity, which is sufficient for rendering cached offline views.
+ *
+ * Supabase stores its auth token in localStorage under a key matching the
+ * pattern `sb-{project-ref}-auth-token`. The internal structure has changed
+ * between Supabase versions, so we check for both `currentSession` (older)
+ * and `session` (newer) shapes.
+ *
+ * @returns The cached `Session`, or `null` if nothing usable is found.
+ */
+export declare function getSessionFromStorage(): Session | null;
 /**
  * Check whether a session's access token has expired.
  *

@@ -1235,15 +1235,20 @@ Determines the initial auth state at app startup. This runs before anything else
 4. If no session, check offline credentials + session -> return `authMode: 'offline'`
 5. Return `authMode: 'none'`
 
+**Offline fast path**: When `navigator.onLine` is `false`, the resolver skips all Supabase SDK calls (`getSession()`, `refreshSession()`) which can hang indefinitely in airplane mode on iOS. Instead, it reads the session directly from localStorage via `getSessionFromStorage()` and checks IndexedDB for offline session credentials. The codeLength migration is also deferred when offline to avoid hanging on RPC calls.
+
 For single-user mode, the resolution determines the auth mode based on local config and session state:
 
-| Config Exists | Session State | Result |
-|---------------|---------------|--------|
-| No (or without email) | -- | `authMode: 'none'` |
-| Yes | Valid Supabase session | `authMode: 'supabase'` |
-| Yes | Expired but offline | `authMode: 'supabase'` |
-| Yes | Offline session only | `authMode: 'offline'` |
-| Yes | No session | `authMode: 'none'` (locked) |
+| Config Exists | Session State | Offline? | Result |
+|---------------|---------------|----------|--------|
+| No (or without email) | -- | -- | `authMode: 'none'` |
+| Yes | Valid Supabase session | No | `authMode: 'supabase'` |
+| Yes | Any cached session in localStorage | Yes | `authMode: 'supabase'` |
+| Yes | No Supabase session, offline session in IndexedDB | Yes | `authMode: 'offline'` |
+| Yes | No session at all | Yes | `authMode: 'none'` (user can unlock via PIN) |
+| Yes | Expired but offline (`navigator.onLine` lied) | No* | `authMode: 'supabase'` |
+| Yes | Offline session only | No | `authMode: 'offline'` |
+| Yes | No session | No | `authMode: 'none'` (locked) |
 
 ### 9.6 Login Guard
 
@@ -1615,6 +1620,8 @@ interface SyncState {
 ```
 
 **Anti-Flicker Logic:** The store enforces a minimum 500ms display time for the `'syncing'` state. If a sync cycle completes faster than 500ms, the status change to `'idle'` is deferred until the minimum time elapses. This prevents the sync indicator from rapidly flashing on and off.
+
+**Offline Cold Start:** When `startSyncEngine()` detects the device is offline at startup, it immediately sets status to `'offline'` with a user-friendly message. Without this, `syncStatusStore.reset()` would leave the status as `'idle'`, and the sync indicator would not show the offline state until the first online→offline transition.
 
 Setter methods: `setStatus()`, `setPendingCount()`, `setError()`, `setRealtimeState()`, `setSyncMessage()`, `addSyncError()`.
 
