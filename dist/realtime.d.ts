@@ -1,9 +1,6 @@
 /**
  * @fileoverview Real-Time Subscription Manager -- Supabase Realtime WebSocket Layer
  *
- * Phase 5 of multi-device sync: Implements Supabase Realtime subscriptions
- * for instant multi-device synchronization.
- *
  * ## Architecture
  *
  * This module manages a single Supabase Realtime channel per authenticated user,

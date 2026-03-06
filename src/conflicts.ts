@@ -196,7 +196,9 @@ export interface ConflictResolution {
  */
 function getExcludedFields(entityType: string): Set<string> {
   const defaultExcluded = new Set(['id', 'user_id', 'created_at', '_version']);
-  const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
+  const tableConfig = getEngineConfig().tables.find(
+    (t) => t.schemaKey === entityType || t.supabaseName === entityType
+  );
   return new Set([...defaultExcluded, ...(tableConfig?.excludeFromConflict || [])]);
 }
 
@@ -230,7 +232,9 @@ function getExcludedFields(entityType: string): Set<string> {
  * ```
  */
 function getNumericMergeFields(entityType: string): Set<string> {
-  const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
+  const tableConfig = getEngineConfig().tables.find(
+    (t) => t.schemaKey === entityType || t.supabaseName === entityType
+  );
   return new Set(tableConfig?.numericMergeFields || []);
 }
 

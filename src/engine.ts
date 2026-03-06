@@ -148,9 +148,11 @@ function getSupabase() {
  * @param supabaseName - The remote Supabase table name
  * @returns The local Dexie table name (may include a prefix)
  */
-function getDexieTableName(supabaseName: string): string {
-  const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
-  return table ? getDexieTableFor(table) : supabaseName;
+function getDexieTableName(name: string): string {
+  const table = getEngineConfig().tables.find(
+    (t) => t.supabaseName === name || t.schemaKey === name
+  );
+  return table ? getDexieTableFor(table) : name;
 }
 
 /**
@@ -163,8 +165,10 @@ function getDexieTableName(supabaseName: string): string {
  * @param supabaseName - The remote Supabase table name
  * @returns PostgREST column selector (e.g., `"id,name,updated_at"` or `"*"`)
  */
-function getColumns(supabaseName: string): string {
-  const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
+function getColumns(name: string): string {
+  const table = getEngineConfig().tables.find(
+    (t) => t.supabaseName === name || t.schemaKey === name
+  );
   return table?.columns || '*';
 }
 
@@ -178,8 +182,10 @@ function getColumns(supabaseName: string): string {
  * @param supabaseName - The remote Supabase table name
  * @returns `true` if the table is a singleton
  */
-function isSingletonTable(supabaseName: string): boolean {
-  const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
+function isSingletonTable(name: string): boolean {
+  const table = getEngineConfig().tables.find(
+    (t) => t.supabaseName === name || t.schemaKey === name
+  );
   return table?.isSingleton || false;
 }
 

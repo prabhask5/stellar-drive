@@ -100,7 +100,7 @@ import { getDeviceId } from './deviceId';
  */
 function getExcludedFields(entityType) {
     const defaultExcluded = new Set(['id', 'user_id', 'created_at', '_version']);
-    const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
+    const tableConfig = getEngineConfig().tables.find((t) => t.schemaKey === entityType || t.supabaseName === entityType);
     return new Set([...defaultExcluded, ...(tableConfig?.excludeFromConflict || [])]);
 }
 /**
@@ -133,7 +133,7 @@ function getExcludedFields(entityType) {
  * ```
  */
 function getNumericMergeFields(entityType) {
-    const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === entityType);
+    const tableConfig = getEngineConfig().tables.find((t) => t.schemaKey === entityType || t.supabaseName === entityType);
     return new Set(tableConfig?.numericMergeFields || []);
 }
 // =============================================================================

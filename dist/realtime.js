@@ -1,9 +1,6 @@
 /**
  * @fileoverview Real-Time Subscription Manager -- Supabase Realtime WebSocket Layer
  *
- * Phase 5 of multi-device sync: Implements Supabase Realtime subscriptions
- * for instant multi-device synchronization.
- *
  * ## Architecture
  *
  * This module manages a single Supabase Realtime channel per authenticated user,
@@ -500,10 +497,14 @@ async function handleRealtimeChange(table, payload) {
     debugLog(`[Realtime] Processing remote change: ${eventType} ${table}/${entityId}`);
     const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === table);
     const dexieTable = tableConfig ? getDexieTableFor(tableConfig) : undefined;
-    if (!dexieTable) {
+    if (!tableConfig || !dexieTable) {
         debugWarn('[Realtime] Unknown table:', table);
         return;
     }
+    /* Use the unprefixed schema key (e.g., 'block_lists') for remoteChangesStore
+       operations. The trackEditing action registers edits by schema key, so we
+       must match that key when recording/deferring remote changes. */
+    const entityTypeKey = tableConfig.schemaKey || table;
     try {
         switch (eventType) {
             // -----------------------------------------------------------------------
@@ -517,7 +518,7 @@ async function handleRealtimeChange(table, payload) {
                    remoteChangesStore will defer the incoming change until the form is
                    closed, preventing jarring mid-edit overwrites. This is a UX decision:
                    we prioritize the active editing experience over instant sync. */
-                const _isBeingEdited = remoteChangesStore.isEditing(entityId, table);
+                const _isBeingEdited = remoteChangesStore.isEditing(entityId, entityTypeKey);
                 /* Fetch the local version so we can diff fields and detect conflicts. */
                 const localEntity = await getEngineConfig().db.table(dexieTable).get(entityId);
                 /* Build a list of fields whose values actually differ between local
@@ -554,12 +555,12 @@ async function handleRealtimeChange(table, payload) {
                     debugLog(`[Realtime] Soft delete detected for ${table}/${entityId}`);
                     /* Record + await the delete animation before touching the DB.
                        The wildcard ['*'] signals the UI that the entire row is affected. */
-                    remoteChangesStore.recordRemoteChange(entityId, table, ['*'], true, 'DELETE');
-                    await remoteChangesStore.markPendingDelete(entityId, table);
+                    remoteChangesStore.recordRemoteChange(entityId, entityTypeKey, ['*'], true, 'DELETE');
+                    await remoteChangesStore.markPendingDelete(entityId, entityTypeKey);
                     /* Now persist the soft-deleted record; reactive stores refresh. */
                     await getEngineConfig().db.table(dexieTable).put(newRecord);
                     recentlyProcessedByRealtime.set(entityId, Date.now());
-                    notifyDataUpdate(table, entityId);
+                    notifyDataUpdate(entityTypeKey, entityId);
                     break;
                 }
                 /* ---- Conflict resolution path ----
@@ -600,7 +601,7 @@ async function handleRealtimeChange(table, payload) {
                        non-conflicting local edits while incorporating the remote state.
                        See conflicts.ts for the three-tier resolution algorithm. */
                     const pendingOps = await getPendingOpsForEntity(entityId);
-                    const resolution = await resolveConflicts(table, entityId, localEntity, newRecord, pendingOps);
+                    const resolution = await resolveConflicts(entityTypeKey, entityId, localEntity, newRecord, pendingOps);
                     await getEngineConfig().db.table(dexieTable).put(resolution.mergedEntity);
                     applied = true;
                     /* Persist conflict history for auditability and potential undo.
@@ -630,18 +631,17 @@ async function handleRealtimeChange(table, payload) {
                    or when the entity is entirely new (!localEntity). This prevents
                    spurious highlight animations for metadata-only updates. */
                 if (changedFields.length > 0 || !localEntity) {
-                    remoteChangesStore.recordRemoteChange(entityId, table, changedFields.length > 0 ? changedFields : ['*'], applied, eventType, valueDelta);
+                    remoteChangesStore.recordRemoteChange(entityId, entityTypeKey, changedFields.length > 0 ? changedFields : ['*'], applied, eventType, valueDelta);
                     /* Fire the optional per-table hook so consumers can run custom
                        side-effects (e.g. toast notifications, badge updates). */
-                    const tblConfig = getEngineConfig().tables.find((t) => t.supabaseName === table);
-                    if (tblConfig?.onRemoteChange) {
-                        tblConfig.onRemoteChange(table, newRecord);
+                    if (tableConfig.onRemoteChange) {
+                        tableConfig.onRemoteChange(entityTypeKey, newRecord);
                     }
                 }
                 /* Mark as recently processed so the polling path skips this entity.
                    This is the bridge between realtime and polling deduplication. */
                 recentlyProcessedByRealtime.set(entityId, Date.now());
-                notifyDataUpdate(table, entityId);
+                notifyDataUpdate(entityTypeKey, entityId);
                 break;
             }
             // -----------------------------------------------------------------------
@@ -659,14 +659,14 @@ async function handleRealtimeChange(table, payload) {
                        rationale as the soft-delete path above: the reactive framework
                        will remove the DOM element immediately on Dexie deletion, so
                        the animation must be set up first. */
-                    remoteChangesStore.recordRemoteChange(entityId, table, ['*'], true, 'DELETE');
+                    remoteChangesStore.recordRemoteChange(entityId, entityTypeKey, ['*'], true, 'DELETE');
                     /* Wait for the pending-delete animation to complete so the UI has
                        time to play an exit transition before the DOM element disappears. */
-                    await remoteChangesStore.markPendingDelete(entityId, table);
+                    await remoteChangesStore.markPendingDelete(entityId, entityTypeKey);
                     /* Now remove the record from Dexie (triggers reactive DOM removal). */
                     await getEngineConfig().db.table(dexieTable).delete(entityId);
                     recentlyProcessedByRealtime.set(entityId, Date.now());
-                    notifyDataUpdate(table, entityId);
+                    notifyDataUpdate(entityTypeKey, entityId);
                 }
                 break;
             }
