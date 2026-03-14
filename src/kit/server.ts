@@ -82,6 +82,9 @@ export interface DeployConfig {
 
   /** Optional table name prefix (e.g. `'switchboard'`). Sets `PUBLIC_APP_PREFIX` env var on Vercel. */
   prefix?: string;
+
+  /** Additional env vars to set on Vercel (e.g. Teller mTLS credentials). */
+  extraEnvVars?: Record<string, string>;
 }
 
 /**
@@ -337,6 +340,12 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
       await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_PREFIX', config.prefix);
     }
 
+    if (config.extraEnvVars) {
+      for (const [key, value] of Object.entries(config.extraEnvVars)) {
+        if (value) await setEnvVar(config.projectId, config.vercelToken, key, value);
+      }
+    }
+
     // -------------------------------------------------------------------------
     //  Phase 2 — Trigger production redeployment
     // -------------------------------------------------------------------------
@@ -584,7 +593,8 @@ export function createDeployHandler(options?: { prefix?: string }) {
 
     /* ── Parse and validate request body ──── */
     try {
-      const { supabaseUrl, supabasePublishableKey, vercelToken } = await request.json();
+      const { supabaseUrl, supabasePublishableKey, vercelToken, extraEnvVars } =
+        await request.json();
 
       if (!supabaseUrl || !supabasePublishableKey || !vercelToken) {
         return new Response(
@@ -614,7 +624,8 @@ export function createDeployHandler(options?: { prefix?: string }) {
         projectId,
         supabaseUrl,
         supabasePublishableKey,
-        prefix: options?.prefix
+        prefix: options?.prefix,
+        extraEnvVars
       });
 
       return new Response(JSON.stringify(result), {

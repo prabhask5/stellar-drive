@@ -211,6 +211,12 @@ export async function deployToVercel(config) {
         if (config.prefix) {
             await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_PREFIX', config.prefix);
         }
+        if (config.extraEnvVars) {
+            for (const [key, value] of Object.entries(config.extraEnvVars)) {
+                if (value)
+                    await setEnvVar(config.projectId, config.vercelToken, key, value);
+            }
+        }
         // -------------------------------------------------------------------------
         //  Phase 2 — Trigger production redeployment
         // -------------------------------------------------------------------------
@@ -437,7 +443,7 @@ export function createDeployHandler(options) {
         }
         /* ── Parse and validate request body ──── */
         try {
-            const { supabaseUrl, supabasePublishableKey, vercelToken } = await request.json();
+            const { supabaseUrl, supabasePublishableKey, vercelToken, extraEnvVars } = await request.json();
             if (!supabaseUrl || !supabasePublishableKey || !vercelToken) {
                 return new Response(JSON.stringify({
                     success: false,
@@ -458,7 +464,8 @@ export function createDeployHandler(options) {
                 projectId,
                 supabaseUrl,
                 supabasePublishableKey,
-                prefix: options?.prefix
+                prefix: options?.prefix,
+                extraEnvVars
             });
             return new Response(JSON.stringify(result), {
                 headers: SECURITY_HEADERS

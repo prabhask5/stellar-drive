@@ -48,6 +48,8 @@ export interface DeployConfig {
     supabasePublishableKey: string;
     /** Optional table name prefix (e.g. `'switchboard'`). Sets `PUBLIC_APP_PREFIX` env var on Vercel. */
     prefix?: string;
+    /** Additional env vars to set on Vercel (e.g. Teller mTLS credentials). */
+    extraEnvVars?: Record<string, string>;
 }
 /**
  * Result of a Vercel deployment attempt.
