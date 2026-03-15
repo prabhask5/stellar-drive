@@ -3844,6 +3844,35 @@ if (supabase) {
 
 ---
 
+#### `createServerAdminClient(prefix?)`
+
+Creates a server-side Supabase admin client that bypasses Row Level Security (RLS). Reads `PUBLIC_SUPABASE_URL` from `getServerConfig()` and `SUPABASE_SERVICE_ROLE_KEY` from `process.env`, returning a `SupabaseClient` instance with full database access. Intended for trusted server-side operations (e.g., background jobs, admin API routes) where RLS should not apply. When a `prefix` is provided, the returned client is wrapped in a Proxy that transparently prefixes all `.from()` calls — e.g., with `prefix = 'radiant'`, `.from('accounts')` becomes `.from('radiant_accounts')`.
+
+**Signature:**
+```ts
+function createServerAdminClient(prefix?: string): SupabaseClient | null
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `prefix` | `string` | Optional table name prefix (e.g., `'radiant'`). |
+
+**Returns:** `SupabaseClient | null` — A Supabase admin client instance that bypasses RLS, or `null` if credentials are not configured in environment variables.
+
+**Example:**
+```ts
+// In hooks.server.ts or +server.ts
+import { createServerAdminClient } from 'stellar-drive/kit';
+
+const admin = createServerAdminClient('radiant');
+if (admin) {
+  // admin.from('accounts') → queries 'radiant_accounts' in Supabase, bypassing RLS
+  const { data } = await admin.from('accounts').select('*');
+}
+```
+
+---
+
 ### Layout Load Functions
 
 #### `resolveRootLayout()`

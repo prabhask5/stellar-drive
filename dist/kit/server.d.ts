@@ -186,6 +186,31 @@ export declare function deployToVercel(config: DeployConfig): Promise<DeployResu
  */
 export declare function createServerSupabaseClient(prefix?: string): SupabaseClient | null;
 /**
+ * Creates a server-side Supabase admin client using the `service_role` key.
+ *
+ * This client **bypasses Row-Level Security (RLS)** and should only be used
+ * in trusted server-side contexts (webhook handlers, background sync jobs)
+ * where no user session is available.
+ *
+ * Reads `PUBLIC_SUPABASE_URL` from the server config and
+ * `SUPABASE_SERVICE_ROLE_KEY` from `process.env`.
+ *
+ * When a `prefix` is provided, `.from()` calls are transparently prefixed
+ * (same as {@link createServerSupabaseClient}).
+ *
+ * @param prefix - Optional table name prefix (e.g. `'radiant'`).
+ * @returns A privileged `SupabaseClient`, or `null` if credentials are missing.
+ *
+ * @example
+ * ```ts
+ * import { createServerAdminClient } from 'stellar-drive/kit/server';
+ * const admin = createServerAdminClient('radiant');
+ * // Bypasses RLS — use only in server-side API routes
+ * await admin?.from('accounts').upsert(rows);
+ * ```
+ */
+export declare function createServerAdminClient(prefix?: string): SupabaseClient | null;
+/**
  * Factory returning a SvelteKit GET handler that serves the server config
  * with appropriate security headers (Cache-Control, X-Content-Type-Options).
  *

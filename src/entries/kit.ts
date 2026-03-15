@@ -25,7 +25,8 @@ export {
   createValidateHandler,
   createConfigHandler,
   createDeployHandler,
-  createServerSupabaseClient
+  createServerSupabaseClient,
+  createServerAdminClient
 } from '../kit/server.js';
 export type { DeployConfig, DeployResult, ServerConfig, SupabaseClient } from '../kit/server.js';
 
