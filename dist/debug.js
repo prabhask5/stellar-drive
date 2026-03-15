@@ -39,6 +39,7 @@ let debugPrefix = 'stellar';
  */
 export function _setDebugPrefix(prefix) {
     debugPrefix = prefix;
+    debugEnabled = null; // Invalidate cache — re-read with the correct prefix key
 }
 // =============================================================================
 // Public API
