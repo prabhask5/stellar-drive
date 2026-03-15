@@ -425,13 +425,6 @@ export function createConfigHandler(options) {
 }
 export function createValidateHandler() {
     return async ({ request, url }) => {
-        /* ── Guard: reject if app is already configured ──── */
-        if (process.env.PUBLIC_SUPABASE_URL) {
-            return new Response(JSON.stringify({ valid: false, error: 'App is already configured' }), {
-                status: 403,
-                headers: SECURITY_HEADERS
-            });
-        }
         /* ── Guard: validate Origin header (CSRF protection) ──── */
         const origin = request.headers.get('origin');
         if (origin && origin !== url.origin) {
@@ -484,13 +477,6 @@ export function createValidateHandler() {
  */
 export function createDeployHandler(options) {
     return async ({ request, url }) => {
-        /* ── Guard: reject if app is already configured ──── */
-        if (process.env.PUBLIC_SUPABASE_URL) {
-            return new Response(JSON.stringify({ success: false, error: 'App is already configured' }), {
-                status: 403,
-                headers: SECURITY_HEADERS
-            });
-        }
         /* ── Guard: validate Origin header (CSRF protection) ──── */
         const origin = request.headers.get('origin');
         if (origin && origin !== url.origin) {
