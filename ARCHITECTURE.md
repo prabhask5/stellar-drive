@@ -633,7 +633,13 @@ acquireSyncLock()  ------> Lock held? Check stale (>60s) -> force release or ski
 
 **Singleton Table Conflict Reconciliation**: A "singleton" table is one that holds exactly one row per user (e.g., user settings). When a `create` operation fails on a singleton table with a duplicate key error (another device created the singleton first), the engine reconciles the local ID with the server's existing row instead of treating it as an error. It fetches the server's row, updates the local entity's ID to match, and the create becomes an update.
 
-**Error Classification**: Errors are classified as transient (network timeout, rate-limit, 5xx) or persistent (auth failure, validation, RLS violation). Transient errors suppress UI error indicators until retry #3 to avoid alarming users during brief network hiccups.
+**Error Classification**: Errors are classified as transient (network timeout, rate-limit, 5xx, RLS policy violations) or persistent (auth failure, validation). Transient errors suppress UI error indicators until retry #3 to avoid alarming users during brief network hiccups. RLS violations are classified as transient because they are often caused by parent-child ordering issues (the parent record hasn't synced yet) and resolve on retry.
+
+**Batch Creates**: Create operations are grouped by table and sent as a single `supabase.from(table).upsert([...])` call (up to 500 rows per batch). This is critical for bulk operations like CSV imports — hundreds of transactions push in 1-2 HTTP calls instead of hundreds of individual round trips. `upsert` (INSERT ON CONFLICT UPDATE) is used instead of `insert` so that duplicate records are handled in one round-trip without error fallback. If the batch fails (e.g., RLS on child tables), the engine falls back to individual `processSyncItem` calls to identify the problem row.
+
+**Parent-Before-Child Table Ordering**: When the schema defines child tables via `ownership: { parent, fk }`, the push phase sorts batch creates so parent tables are processed before child tables. This is essential because child table RLS policies validate that the parent FK exists with a matching `user_id`. Without this ordering, a batch of child creates would fail RLS because the parent records haven't been inserted yet.
+
+**Self-Healing Upsert Fallback**: When a `set` or `increment` operation fails because the target row doesn't exist in Supabase (UPDATE returns 0 rows), the engine reads the full entity from IndexedDB and INSERTs it. This self-heals "stuck" data — records that exist locally but never made it to the server (e.g., written by code paths that bypassed the sync queue). Duplicate key errors during the fallback insert are handled gracefully. For singleton tables, the existing ID reconciliation logic takes precedence.
 
 ### 6.5 Pull Phase Details
 
@@ -707,6 +713,8 @@ The engine aggressively minimizes Supabase bandwidth consumption. This matters b
 | **Cursor-based incremental pull** | Only fetches new data | `WHERE updated_at > cursor` instead of full table scan. |
 | **Realtime dedup** | Prevents double-processing | Entities processed by realtime are tracked in a 2s TTL map; polling skips them. |
 | **Parallel table queries** | Reduces wall-clock time | All tables are fetched concurrently via `Promise.all()`. |
+| **Batch upserts** | N creates → 1 request | Create operations are grouped by table and sent as a single `upsert([...])`. Handles duplicates without fallback round-trips. |
+| **Parent-first ordering** | Prevents RLS retry storms | Child table batches wait until parent batches succeed, avoiding failed inserts that waste bandwidth on retries. |
 
 ### 6.9 Egress Tracking
 
@@ -744,6 +752,25 @@ The engine uses **soft deletes** (also called "tombstones") instead of hard dele
 Tombstones accumulate over time and must eventually be cleaned up:
 - **Local cleanup**: `cleanupLocalTombstones()` removes records where `deleted=true AND updated_at < (now - tombstoneMaxAgeDays)`. Default: 7 days.
 - **Server cleanup**: `cleanupServerTombstones()` hard-deletes from PostgreSQL. Runs at most once per 24 hours (`CLEANUP_INTERVAL_MS = 86400000`). The `lastServerCleanup` timestamp prevents re-running.
+
+### 6.11 Sync Queue Repair
+
+**File**: `src/engine.ts` — `repairSyncQueue()`
+
+The sync queue repair mechanism self-heals data that was written to IndexedDB via code paths that bypassed the sync queue (e.g., direct Dexie writes from legacy code, or migration artifacts). It is a **manual debug tool** invoked from the profile page — it does not run automatically.
+
+**How it works:**
+1. Reads all entity IDs currently in the sync queue (`syncQueue.toArray()`)
+2. For each configured table, reads all local records from IndexedDB
+3. Records that are not in the queue AND not soft-deleted are re-queued as `create` operations
+4. Tables are sorted parent-first to ensure FK ordering (same logic as batch creates)
+
+**Egress considerations:**
+- The repair itself is zero-egress (IndexedDB reads only)
+- Re-queued records are pushed via the normal batch upsert path, so duplicates are handled in one round-trip
+- Since it is manual-only, there is no risk of accidental repeated re-queuing
+
+**When to use:** If you suspect stuck data (records visible locally but not on other devices), use the "Repair Sync Queue" button on the profile page's debug tools section.
 
 ---
 

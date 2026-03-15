@@ -445,6 +445,31 @@ unsubscribe();
 
 ---
 
+#### `repairSyncQueue()`
+
+Scans all IndexedDB tables and re-queues any records that are missing from the sync queue. This self-heals data that was written to IndexedDB via code paths that bypassed the sync queue (e.g., direct Dexie writes from legacy code).
+
+This is a **manual debug tool** — it does not run automatically. It is exposed via a "Repair Sync Queue" button on the profile page's debug tools section. Re-queued records are pushed via the batch upsert path, so duplicates that already exist in Supabase are handled in one round-trip.
+
+Tables are sorted parent-first to ensure FK ordering (child table RLS policies check parent existence).
+
+**Signature:**
+```ts
+function repairSyncQueue(): Promise<number>
+```
+
+**Returns:** The number of records that were re-queued.
+
+**Example:**
+```ts
+import { repairSyncQueue } from 'stellar-drive/engine';
+
+const count = await repairSyncQueue();
+alert(`Re-queued ${count} records`);
+```
+
+---
+
 ### Credential Validation
 
 #### `validateSupabaseCredentials(url, key)`

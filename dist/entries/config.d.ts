@@ -10,6 +10,10 @@
  * - `setConfig` — merges partial updates into the active configuration.
  * - `AppConfig` — TypeScript interface describing the configuration shape.
  */
-export { initConfig, getConfig, setConfig } from '../runtime/runtimeConfig';
+export { initConfig, getConfig, setConfig, probeNetworkReachability, isOffline, setOfflineFlag } from '../runtime/runtimeConfig';
 export type { AppConfig } from '../runtime/runtimeConfig';
+export { initEngine } from '../config';
+export type { SyncEngineConfig, TableConfig, InitEngineInput } from '../config';
+export { supabase } from '../supabase/client';
+export { getDb, resetDatabase } from '../database';
 //# sourceMappingURL=config.d.ts.map

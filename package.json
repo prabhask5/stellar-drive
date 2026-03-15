@@ -13,6 +13,10 @@
       "types": "./dist/data.d.ts",
       "import": "./dist/data.js"
     },
+    "./engine": {
+      "types": "./dist/entries/engine.d.ts",
+      "import": "./dist/entries/engine.js"
+    },
     "./auth": {
       "types": "./dist/entries/auth.d.ts",
       "import": "./dist/entries/auth.js"
@@ -44,6 +48,10 @@
     "./kit": {
       "types": "./dist/entries/kit.d.ts",
       "import": "./dist/entries/kit.js"
+    },
+    "./demo": {
+      "types": "./dist/entries/demo.d.ts",
+      "import": "./dist/entries/demo.js"
     },
     "./crdt": {
       "types": "./dist/entries/crdt.d.ts",

@@ -71,6 +71,7 @@ export type {
   AuthMode,
   SingleUserConfig,
   SingleUserGateType,
+  TrustedDevice,
   SchemaDefinition,
   SchemaTableConfig,
   AuthConfig,

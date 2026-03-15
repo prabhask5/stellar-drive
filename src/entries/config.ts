@@ -18,5 +18,34 @@
 // and can be read or patched anywhere in the application. Backed by the
 // `runtimeConfig` module which handles persistence and reactivity.
 
-export { initConfig, getConfig, setConfig } from '../runtime/runtimeConfig';
+export {
+  initConfig,
+  getConfig,
+  setConfig,
+  probeNetworkReachability,
+  isOffline,
+  setOfflineFlag
+} from '../runtime/runtimeConfig';
 export type { AppConfig } from '../runtime/runtimeConfig';
+
+// =============================================================================
+//  Engine Initialization
+// =============================================================================
+// `initEngine` bootstraps the sync engine with the provided configuration.
+
+export { initEngine } from '../config';
+export type { SyncEngineConfig, TableConfig, InitEngineInput } from '../config';
+
+// =============================================================================
+//  Supabase Client
+// =============================================================================
+// Direct access to the initialized Supabase client instance for custom queries.
+
+export { supabase } from '../supabase/client';
+
+// =============================================================================
+//  Database Access
+// =============================================================================
+// Direct access to the IndexedDB database and reset functionality.
+
+export { getDb, resetDatabase } from '../database';

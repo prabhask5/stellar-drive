@@ -229,5 +229,16 @@ export declare function stopSyncEngine(): Promise<void>;
  * database is still open when clearing tables.
  */
 export declare function clearLocalCache(): Promise<void>;
+/**
+ * Repair the sync queue by re-queuing IndexedDB records that have no corresponding
+ * sync queue entries. This self-heals data that was written to IndexedDB via code
+ * paths that bypassed the sync queue (e.g., direct Dexie writes from old code).
+ *
+ * For each configured table, scans all local records and checks whether a
+ * `create` entry already exists in the sync queue. If not, enqueues one.
+ *
+ * @returns The number of records that were re-queued
+ */
+export declare function repairSyncQueue(): Promise<number>;
 export {};
 //# sourceMappingURL=engine.d.ts.map

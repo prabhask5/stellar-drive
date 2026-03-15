@@ -81,3 +81,27 @@ export {
   linkSingleUserDevice,
   resetSingleUserRemote
 } from '../auth/singleUser';
+
+// =============================================================================
+//  Login Guard
+// =============================================================================
+// Prevents duplicate login attempts by maintaining a transient lock.
+
+export { resetLoginGuard } from '../auth/loginGuard';
+
+// =============================================================================
+//  Device Verification
+// =============================================================================
+// Trust management for multi-device single-user setups.
+
+export {
+  isDeviceTrusted,
+  trustCurrentDevice,
+  trustPendingDevice,
+  getTrustedDevices,
+  removeTrustedDevice,
+  maskEmail,
+  sendDeviceVerification,
+  getCurrentDeviceId,
+  getDeviceLabel
+} from '../auth/deviceVerification';

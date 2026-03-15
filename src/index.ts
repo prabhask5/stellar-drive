@@ -61,7 +61,7 @@ export type { SchemaVersionResult } from './database';
 // - `onSyncComplete` — registers a callback that fires after each successful
 //   sync cycle (useful for refreshing UI or derived data).
 
-export { startSyncEngine, runFullSync } from './engine';
+export { startSyncEngine, runFullSync, repairSyncQueue } from './engine';
 export { onSyncComplete } from './engine';
 
 // =============================================================================

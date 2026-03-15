@@ -34,7 +34,7 @@ export { getDb, resetDatabase } from './database';
 export type { DatabaseConfig, DatabaseVersionConfig } from './database';
 export { SYSTEM_INDEXES, computeSchemaVersion } from './database';
 export type { SchemaVersionResult } from './database';
-export { startSyncEngine, runFullSync } from './engine';
+export { startSyncEngine, runFullSync, repairSyncQueue } from './engine';
 export { onSyncComplete } from './engine';
 export { engineCreate, engineUpdate, engineDelete, engineBatchWrite, engineIncrement } from './data';
 export type { BatchOperation } from './data';

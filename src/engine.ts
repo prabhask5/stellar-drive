@@ -1279,6 +1279,37 @@ interface PushStats {
  * @returns Push statistics (original count, coalesced count, actually pushed)
  * @throws {Error} If auth validation fails before push
  */
+
+/**
+ * Handle errors from individual sync item processing.
+ * Extracted to avoid duplication in the batch-create fallback paths.
+ */
+function handleSyncItemError(item: SyncOperationItem, error: unknown): void {
+  debugError(`[SYNC] Failed: ${item.operationType} ${item.table}/${item.entityId}:`, error);
+
+  const transient = isTransientError(error);
+  const shouldShowError = !transient || item.retries >= 3;
+
+  if (shouldShowError) {
+    const errorInfo = {
+      message: extractErrorMessage(error),
+      table: item.table,
+      operation: item.operationType,
+      entityId: item.entityId
+    };
+    pushErrors.push(errorInfo);
+    syncStatusStore.addSyncError({
+      ...errorInfo,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  if (item.id) {
+    // Fire and forget — incrementRetry is async but we don't need to await in error handler
+    void incrementRetry(item.id);
+  }
+}
+
 async function pushPendingOps(): Promise<PushStats> {
   const maxIterations = 10; // Safety limit to prevent infinite loops
   let iterations = 0;
@@ -1336,7 +1367,119 @@ async function pushPendingOps(): Promise<PushStats> {
     iterations++;
     let processedAny = false;
 
-    for (const item of pendingItems) {
+    // ── Batch creates: group by table and INSERT in bulk ──
+    // This is critical for performance: CSV imports with hundreds of transactions
+    // push in a few batch calls instead of hundreds of individual HTTP requests.
+    const createItems = pendingItems.filter((item) => item.operationType === 'create');
+    const nonCreateItems = pendingItems.filter((item) => item.operationType !== 'create');
+
+    if (createItems.length > 0) {
+      // Group creates by table, preserving queue order within each group
+      const createsByTable = new Map<string, SyncOperationItem[]>();
+      for (const item of createItems) {
+        // Verify item is still in queue (may have been purged by reconciliation)
+        if (item.id) {
+          const stillQueued = await db.table('syncQueue').get(item.id);
+          if (!stillQueued) continue;
+        }
+        const existing = createsByTable.get(item.table) || [];
+        existing.push(item);
+        createsByTable.set(item.table, existing);
+      }
+
+      // Sort table order: parent tables before child tables to satisfy RLS FK checks.
+      const schema = getEngineConfig().schema;
+      const sortedTableEntries = [...createsByTable.entries()].sort(([tableA], [tableB]) => {
+        if (!schema) return 0;
+        // Resolve schema keys from supabase names (strip prefix)
+        const configA = getEngineConfig().tables.find((t) => t.supabaseName === tableA);
+        const configB = getEngineConfig().tables.find((t) => t.supabaseName === tableB);
+        const keyA = configA?.schemaKey || tableA;
+        const keyB = configB?.schemaKey || tableB;
+        const aIsChild = isChildTable(schema, keyA);
+        const bIsChild = isChildTable(schema, keyB);
+        if (aIsChild && !bIsChild) return 1;
+        if (!aIsChild && bIsChild) return -1;
+        return 0;
+      });
+
+      for (const [tableName, items] of sortedTableEntries) {
+        const supabase = getSupabase();
+        const deviceId = getDeviceId();
+
+        // Build batch payload
+        const payloads = items.map((item) => ({
+          id: item.entityId,
+          ...(item.value as Record<string, unknown>),
+          device_id: deviceId
+        }));
+
+        // Batch insert (up to 500 at a time to stay within Supabase limits)
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < payloads.length; i += BATCH_SIZE) {
+          const batch = payloads.slice(i, i + BATCH_SIZE);
+          const batchItems = items.slice(i, i + BATCH_SIZE);
+
+          try {
+            debugLog(`[SYNC] Batch upsert ${batch.length} rows into ${tableName}`);
+            // Use upsert (INSERT ... ON CONFLICT DO UPDATE) instead of insert.
+            // This handles duplicates in a single round-trip — no fallback needed.
+            // Records that already exist in Supabase are updated (no-op if data is same),
+            // records that don't exist are inserted. Critical for repair scenarios where
+            // we can't distinguish "never synced" from "already synced".
+            const { error } = await supabase
+              .from(tableName)
+              .upsert(batch, { onConflict: 'id', ignoreDuplicates: false });
+
+            if (error) {
+              // Batch failed — fall back to individual to identify the problem row(s).
+              // Common cause: RLS on child tables when parent hasn't synced yet.
+              debugError(`[SYNC] Batch upsert failed for ${tableName}:`, error);
+              for (const item of batchItems) {
+                try {
+                  await processSyncItem(item);
+                  if (item.id) {
+                    await removeSyncItem(item.id);
+                    processedAny = true;
+                    actualPushed++;
+                  }
+                } catch (itemError) {
+                  handleSyncItemError(item, itemError);
+                }
+              }
+            } else {
+              // Batch succeeded — remove all items from queue
+              for (const item of batchItems) {
+                if (item.id) {
+                  await removeSyncItem(item.id);
+                  processedAny = true;
+                  actualPushed++;
+                }
+              }
+              debugLog(`[SYNC] Batch upsert success: ${batch.length} rows into ${tableName}`);
+            }
+          } catch (batchError) {
+            // Network-level failure — fall back to individual
+            debugError(`[SYNC] Batch insert threw for ${tableName}:`, batchError);
+            for (const item of batchItems) {
+              try {
+                await processSyncItem(item);
+                if (item.id) {
+                  await removeSyncItem(item.id);
+                  processedAny = true;
+                  actualPushed++;
+                }
+              } catch (itemError) {
+                handleSyncItemError(item, itemError);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ── Process non-create operations individually ──
+    for (const item of nonCreateItems) {
       try {
         // Skip items that were purged from the queue during reconciliation
         // (e.g. singleton ID reconciliation deletes old queued ops)
@@ -1358,37 +1501,7 @@ async function pushPendingOps(): Promise<PushStats> {
           debugLog(`[SYNC] Success: ${item.operationType} ${item.table}/${item.entityId}`);
         }
       } catch (error) {
-        debugError(`[SYNC] Failed: ${item.operationType} ${item.table}/${item.entityId}:`, error);
-
-        // Determine if this is a transient error that will likely succeed on retry
-        const transient = isTransientError(error);
-
-        // Only show error in UI if:
-        // 1. It's a persistent error (won't fix itself) OR
-        // 2. It's a transient error AND this is the last retry attempt (retries >= 3)
-        // This prevents momentary error flashes for network hiccups that resolve on retry
-        const shouldShowError = !transient || item.retries >= 3;
-
-        if (shouldShowError) {
-          // Capture error details for UI display
-          const errorInfo = {
-            message: extractErrorMessage(error),
-            table: item.table,
-            operation: item.operationType,
-            entityId: item.entityId
-          };
-          pushErrors.push(errorInfo);
-
-          // Also add to the sync status store for UI
-          syncStatusStore.addSyncError({
-            ...errorInfo,
-            timestamp: new Date().toISOString()
-          });
-        }
-
-        if (item.id) {
-          await incrementRetry(item.id);
-        }
+        handleSyncItemError(item, error);
       }
     }
 
@@ -1485,6 +1598,18 @@ function isTransientError(error: unknown): boolean {
 
   // Service unavailable - transient
   if (msg.includes('unavailable') || msg.includes('temporarily')) {
+    return true;
+  }
+
+  // RLS policy violations - transient when caused by parent-child ordering
+  // (parent record hasn't synced yet, child insert fails RLS FK check).
+  // The parent will sync on a subsequent attempt, then the child retry succeeds.
+  if (msg.includes('row-level security') || msg.includes('rls')) {
+    return true;
+  }
+
+  // Insert fallback blocked by RLS - same parent-child ordering issue
+  if (msg.includes('insert fallback blocked')) {
     return true;
   }
 
@@ -1632,6 +1757,20 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
       if (error) throw error;
       // Check if update actually affected any rows
       if (!data) {
+        // Self-heal: row missing in Supabase — insert full entity from IndexedDB
+        const localInc = await db.table(dexieTable).get(entityId);
+        if (localInc) {
+          debugLog(`[SYNC] Increment fallback to insert for missing row: ${table}/${entityId}`);
+          const insertPayload = { ...localInc, device_id: deviceId };
+          delete (insertPayload as Record<string, unknown>)._version;
+          const { error: insertError } = await supabase
+            .from(table)
+            .insert(insertPayload)
+            .select('id')
+            .maybeSingle();
+          if (insertError && !isDuplicateKeyError(insertError)) throw insertError;
+          break;
+        }
         throw new Error(`Update blocked by RLS or row missing: ${table}/${entityId}`);
       }
       break;
@@ -1701,6 +1840,30 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
               break;
             }
           }
+        }
+        // Row doesn't exist in Supabase — self-heal by reading from IndexedDB and inserting.
+        // This handles "stuck" data: records written to IndexedDB (e.g. via old code paths)
+        // that never made it to Supabase. Instead of failing, we promote the set to a create.
+        const localEntity = await db.table(dexieTable).get(entityId);
+        if (localEntity) {
+          debugLog(`[SYNC] Set fallback to insert for missing row: ${table}/${entityId}`);
+          const insertPayload = { ...localEntity, device_id: deviceId };
+          // Remove Dexie internal keys
+          delete (insertPayload as Record<string, unknown>)._version;
+          const { data: inserted, error: insertError } = await supabase
+            .from(table)
+            .insert(insertPayload)
+            .select('id')
+            .maybeSingle();
+          if (insertError && isDuplicateKeyError(insertError)) {
+            // Another device created it in the meantime — that's fine
+            break;
+          }
+          if (insertError) throw insertError;
+          if (!inserted) {
+            throw new Error(`Insert fallback blocked by RLS: ${table}/${entityId}`);
+          }
+          break;
         }
         throw new Error(`Update blocked by RLS or row missing: ${table}/${entityId}`);
       }
@@ -3269,4 +3432,97 @@ export async function clearLocalCache(): Promise<void> {
   }
   _hasHydrated = false;
   _hydrationAttempted = false;
+}
+
+/**
+ * Repair the sync queue by re-queuing IndexedDB records that have no corresponding
+ * sync queue entries. This self-heals data that was written to IndexedDB via code
+ * paths that bypassed the sync queue (e.g., direct Dexie writes from old code).
+ *
+ * For each configured table, scans all local records and checks whether a
+ * `create` entry already exists in the sync queue. If not, enqueues one.
+ *
+ * @returns The number of records that were re-queued
+ */
+export async function repairSyncQueue(): Promise<number> {
+  const db = getDb();
+  const config = getEngineConfig();
+  let requeued = 0;
+
+  // Get all entity IDs currently in the sync queue
+  const pendingItems = await db.table('syncQueue').toArray();
+  const pendingEntityIds = new Set(pendingItems.map((item: SyncOperationItem) => item.entityId));
+
+  // Sort tables: parent tables first, child tables second.
+  // Child tables have ownership: { parent, fk } in the schema — their RLS
+  // policies check that the parent FK exists with a matching user_id.
+  // If we queue child creates before parent creates, the child inserts will
+  // fail RLS because the parent doesn't exist in Supabase yet.
+  const schema = config.schema;
+  const childTables = new Set<string>();
+  if (schema) {
+    for (const [, definition] of Object.entries(schema)) {
+      if (
+        typeof definition === 'object' &&
+        definition.ownership &&
+        typeof definition.ownership === 'object'
+      ) {
+        childTables.add(definition.ownership.parent);
+      }
+    }
+  }
+
+  // Partition into parent-first and child-second
+  const sortedTables = [...config.tables].sort((a, b) => {
+    const aSchemaKey = a.schemaKey || a.supabaseName;
+    const bSchemaKey = b.schemaKey || b.supabaseName;
+    const aIsChild = schema ? isChildTable(schema, aSchemaKey) : false;
+    const bIsChild = schema ? isChildTable(schema, bSchemaKey) : false;
+    if (aIsChild && !bIsChild) return 1; // a after b
+    if (!aIsChild && bIsChild) return -1; // a before b
+    return 0;
+  });
+
+  for (const tableConfig of sortedTables) {
+    if (tableConfig.isSingleton) continue; // Skip singletons
+
+    const dexieTable = getDexieTableFor(tableConfig);
+    const supabaseName = tableConfig.supabaseName;
+    const allLocal = await db.table(dexieTable).toArray();
+
+    for (const record of allLocal) {
+      if (!record.id) continue;
+      if (record.deleted) continue; // Don't re-queue tombstones
+      if (pendingEntityIds.has(record.id)) continue; // Already queued
+
+      // Build the payload (strip Dexie internals)
+      const payload = { ...record };
+      delete payload.id;
+      delete payload._version;
+
+      await queueSyncOperation({
+        table: supabaseName,
+        entityId: record.id,
+        operationType: 'create',
+        value: payload
+      });
+      requeued++;
+    }
+  }
+
+  if (requeued > 0) {
+    debugLog(`[SYNC] Repair: re-queued ${requeued} records missing from sync queue`);
+  }
+
+  return requeued;
+}
+
+/**
+ * Check if a table is a child table (has ownership: { parent, fk }) in the schema.
+ */
+function isChildTable(schema: Record<string, unknown>, schemaKey: string): boolean {
+  const def = schema[schemaKey];
+  if (!def || typeof def !== 'object') return false;
+  const ownership = (def as Record<string, unknown>).ownership;
+  return typeof ownership === 'object' && ownership !== null;
 }

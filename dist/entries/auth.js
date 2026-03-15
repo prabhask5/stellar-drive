@@ -47,4 +47,14 @@ export { resolveFirstName, resolveUserId, resolveAvatarInitial } from '../auth/d
 // - Remote configuration (`fetchRemoteGateConfig`, `resetSingleUserRemote`)
 // - Utility (`padPin`, `isSingleUserSetUp`, `getSingleUserInfo`)
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from '../auth/singleUser';
+// =============================================================================
+//  Login Guard
+// =============================================================================
+// Prevents duplicate login attempts by maintaining a transient lock.
+export { resetLoginGuard } from '../auth/loginGuard';
+// =============================================================================
+//  Device Verification
+// =============================================================================
+// Trust management for multi-device single-user setups.
+export { isDeviceTrusted, trustCurrentDevice, trustPendingDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from '../auth/deviceVerification';
 //# sourceMappingURL=auth.js.map
