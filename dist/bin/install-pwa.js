@@ -1599,9 +1599,11 @@ function generateRootLayoutSvelte(opts) {
   /* ── SvelteKit Utilities ── */
   import { page } from '$app/stores';
   import { browser } from '$app/environment';
+  import { goto } from '$app/navigation';
 
   /* ── Stellar Engine — Auth & Stores ── */
   import { lockSingleUser } from 'stellar-drive/auth';
+  import { authState } from 'stellar-drive/stores';
   import { debug } from 'stellar-drive/utils';
   import { hydrateAuthState } from 'stellar-drive/kit';
   import DemoBanner from 'stellar-drive/components/DemoBanner';
@@ -1795,6 +1797,14 @@ function generateRootLayoutSvelte(opts) {
     // Lock the single-user session (stops engine, resets auth state, does NOT destroy data)
     await lockSingleUser();
 
+    // Client-side navigate to login — keeps the layout mounted so the
+    // sign-out overlay persists seamlessly (no flicker between pages).
+    await goto('/login', { invalidateAll: true });
+
+    // Dismiss the overlay now that the login page has rendered underneath
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    isSigningOut = false;
+
     // Navigate to login
     window.location.href = '/login';
   }
@@ -1817,6 +1827,15 @@ function generateRootLayoutSvelte(opts) {
     showToast = false;
   }
 </script>
+
+<!-- Auth Loading Overlay — covers the screen until auth state resolves.
+     Prevents flicker of protected page content during redirects to /login. -->
+{#if $authState.isLoading}
+  <div style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--color-bg, #0a0a0a);">
+    <!-- TODO: Replace with your app's loading animation -->
+    <span>Loading...</span>
+  </div>
+{/if}
 
 <!-- TODO: Add your app shell template (navbar, tab bar, page transitions, etc.) -->
 {@render children?.()}

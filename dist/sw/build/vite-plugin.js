@@ -226,12 +226,21 @@ async function processLoadedSchema(schema, appName, prefix, schemaOpts, projectR
         console.log('[stellar-drive] No tables in schema, skipping SQL generation');
         return;
     }
+    /* Discover existing tables from the live database to detect removals.
+     * This is more reliable than a file-based cache — works on first build,
+     * in CI, and across clean checkouts without any committed state. */
+    const previousTables = await discoverExistingTables(prefix, schemaOpts, projectRoot);
+    const removedTables = previousTables.filter((t) => !tableNames.includes(t));
+    if (removedTables.length > 0) {
+        console.log(`[stellar-drive] Detected removed tables: ${removedTables.join(', ')}`);
+    }
     console.log(`[stellar-drive] Syncing ${tableNames.length} tables: ${tableNames.join(', ')}`);
     let fullSQL = generateSupabaseSQL(schema, {
         appName,
         prefix,
         includeHelperFunctions: true,
-        includeCRDT: schemaOpts.includeCRDT
+        includeCRDT: schemaOpts.includeCRDT,
+        previousTables
     });
     /* 3. Append custom SQL files (app-specific RPC functions, views, etc.). */
     if (schemaOpts.customSQL) {
@@ -256,6 +265,68 @@ async function processLoadedSchema(schema, appName, prefix, schemaOpts, projectR
         }
     }
     await pushSchema(fullSQL, schemaOpts, projectRoot);
+}
+/**
+ * Query the live database for existing tables managed by stellar-drive.
+ *
+ * Uses the app prefix to identify tables in the `public` schema that were
+ * created by this app (e.g., `radiant_accounts`, `radiant_user_settings`).
+ * Returns the unprefixed table names (e.g., `['accounts', 'user_settings']`)
+ * so they can be diffed against the current schema keys.
+ *
+ * Falls back to an empty array if DATABASE_URL is not set or the query fails,
+ * so the build continues without DROP statements rather than failing.
+ */
+async function discoverExistingTables(prefix, opts, root) {
+    let databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+        for (const envFile of ['.env.local', '.env']) {
+            const envPath = join(root, envFile);
+            if (existsSync(envPath)) {
+                const match = readFileSync(envPath, 'utf-8').match(/^DATABASE_URL\s*=\s*(.+)$/m);
+                if (match) {
+                    databaseUrl = match[1].trim();
+                    break;
+                }
+            }
+        }
+    }
+    if (!databaseUrl)
+        return [];
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    let postgres;
+    try {
+        const depName = 'postgres';
+        const mod = await import(depName);
+        postgres = mod.default;
+    }
+    catch {
+        return [];
+    }
+    const sql_client = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+    try {
+        const tablePrefix = prefix ? `${prefix}_` : '';
+        const rows = await sql_client `
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND table_name LIKE ${tablePrefix + '%'}
+    `;
+        /* Strip the prefix to return raw schema keys. */
+        return rows
+            .map((r) => r.table_name)
+            .filter((name) => name.startsWith(tablePrefix))
+            .map((name) => name.slice(tablePrefix.length));
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[stellar-drive] Could not discover existing tables: ${message}`);
+        return [];
+    }
+    finally {
+        await sql_client.end();
+    }
 }
 /**
  * Push schema SQL to Supabase via a direct Postgres connection.

@@ -636,6 +636,22 @@ export function generateSupabaseSQL(schema, options) {
             parts.push('');
         }
     }
+    /* ---- Drop removed tables ---- */
+    const currentTableNames = new Set(Object.keys(schema));
+    if (options?.previousTables && options.previousTables.length > 0) {
+        const removed = options.previousTables.filter((t) => !currentTableNames.has(t));
+        if (removed.length > 0) {
+            parts.push('-- ============================================================');
+            parts.push('-- REMOVED TABLES (no longer in schema)');
+            parts.push('-- ============================================================');
+            parts.push('');
+            for (const tableName of removed) {
+                const supaTableName = prefix ? `${prefix}_${tableName}` : tableName;
+                parts.push(`drop table if exists ${supaTableName} cascade;`);
+            }
+            parts.push('');
+        }
+    }
     for (const [tableName, definition] of Object.entries(schema)) {
         /* Normalize string shorthand to object form. */
         const config = typeof definition === 'string' ? { indexes: definition } : definition;

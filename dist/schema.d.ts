@@ -76,6 +76,13 @@ export interface SQLGenerationOptions {
     storage?: {
         buckets: StorageBucketConfig[];
     };
+    /**
+     * Table names from the previous schema generation.
+     * Tables present here but missing from the current schema will receive
+     * `DROP TABLE ... CASCADE` statements in the generated SQL.
+     * Pass the raw schema keys (snake_case, unprefixed) — the prefix is applied automatically.
+     */
+    previousTables?: string[];
 }
 /**
  * Options for controlling TypeScript interface generation.

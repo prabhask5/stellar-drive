@@ -83,6 +83,13 @@ export interface SQLGenerationOptions {
   storage?: {
     buckets: StorageBucketConfig[];
   };
+  /**
+   * Table names from the previous schema generation.
+   * Tables present here but missing from the current schema will receive
+   * `DROP TABLE ... CASCADE` statements in the generated SQL.
+   * Pass the raw schema keys (snake_case, unprefixed) — the prefix is applied automatically.
+   */
+  previousTables?: string[];
 }
 
 /**
@@ -828,6 +835,23 @@ export function generateSupabaseSQL(
       parts.push(
         `ALTER INDEX IF EXISTS idx_${tableName}_deleted RENAME TO idx_${prefixedName}_deleted;`
       );
+      parts.push('');
+    }
+  }
+
+  /* ---- Drop removed tables ---- */
+  const currentTableNames = new Set(Object.keys(schema));
+  if (options?.previousTables && options.previousTables.length > 0) {
+    const removed = options.previousTables.filter((t) => !currentTableNames.has(t));
+    if (removed.length > 0) {
+      parts.push('-- ============================================================');
+      parts.push('-- REMOVED TABLES (no longer in schema)');
+      parts.push('-- ============================================================');
+      parts.push('');
+      for (const tableName of removed) {
+        const supaTableName = prefix ? `${prefix}_${tableName}` : tableName;
+        parts.push(`drop table if exists ${supaTableName} cascade;`);
+      }
       parts.push('');
     }
   }
