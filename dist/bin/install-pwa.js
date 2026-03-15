@@ -2060,6 +2060,7 @@ function generateSetupPageSvelte(opts) {
   import { setConfig } from 'stellar-drive/config';
   import { isOnline } from 'stellar-drive/stores';
   import { pollForNewServiceWorker } from 'stellar-drive/kit';
+  import Reconfigure from './Reconfigure.svelte';
 
   // =============================================================================
   //  Wizard State
@@ -2261,6 +2262,7 @@ function generateSetupPageSvelte(opts) {
 
 <div class="setup-page">
   <div class="setup-container">
+    {#if isFirstSetup}
     <!-- Header -->
     <h1>Set Up ${opts.name}</h1>
     <p class="subtitle">Configure ${opts.name} to connect to your own Supabase backend</p>
@@ -2395,7 +2397,7 @@ function generateSetupPageSvelte(opts) {
             </div>
             <div class="deploy-stage" class:active={deployStage === 'deploying'} class:done={deployStage === 'ready'}>
               <span class="stage-icon">{#if deployStage === 'deploying'}&#9675;{:else if deployStage === 'ready'}&#10003;{:else}&#8226;{/if}</span>
-              Deploying to Vercel
+              Deploying to Vercel... (might take a minute)
             </div>
             <div class="deploy-stage" class:active={deployStage === 'ready'}>
               <span class="stage-icon">{#if deployStage === 'ready'}&#10003;{:else}&#8226;{/if}</span>
@@ -2406,8 +2408,16 @@ function generateSetupPageSvelte(opts) {
 
         {#if deployStage === 'ready'}
           <div class="message message-success">
-            Deployment complete! <a href="/">Refresh to start using ${opts.name}</a>.
+            Deployment complete! Use the update prompt at the bottom of the screen to refresh.
+            If it doesn't appear, click below.
           </div>
+          <button
+            class="btn btn-secondary"
+            onclick={() => (window.location.href = '/')}
+            style="margin-top: 0.75rem;"
+          >
+            Manually refresh &amp; go home
+          </button>
         {/if}
       {/if}
     </div>
@@ -2432,12 +2442,16 @@ function generateSetupPageSvelte(opts) {
     </div>
 
     <!-- Security notice (first-time setup only) -->
-    {#if isFirstSetup}
       <div class="security-notice">
         <strong>Security:</strong> Your Supabase credentials are stored as environment variables
         on Vercel and are never sent to any third-party service. The Vercel token is used once
         and is not persisted.
       </div>
+    {:else}
+    <!-- Reconfigure view for returning users -->
+    <h1>Reconfigure ${opts.name}</h1>
+    <p class="subtitle">Update your credentials and redeploy</p>
+    <Reconfigure />
     {/if}
   </div>
 </div>
@@ -2686,6 +2700,732 @@ function generateSetupPageSvelte(opts) {
 
     .step-line {
       width: 24px;
+    }
+  }
+</style>
+`;
+}
+/**
+ * Generate the Reconfigure component for the setup page.
+ *
+ * Shown when `isFirstSetup: false` — a flat settings page where the
+ * user can update Supabase credentials and redeploy without stepping
+ * through the full wizard.
+ *
+ * @returns The Svelte component source for `src/routes/setup/Reconfigure.svelte`.
+ */
+function generateReconfigureSvelte(opts) {
+    return `<!--
+  @fileoverview Reconfigure settings page for ${opts.name}.
+
+  Shown when \\\`isFirstSetup: false\\\` — a flat settings page where the
+  user can update Supabase credentials and redeploy without stepping
+  through the full wizard.
+-->
+<script lang="ts">
+  import { getConfig, setConfig } from 'stellar-drive/config';
+  import { isOnline } from 'stellar-drive/stores';
+  import { pollForNewServiceWorker, monitorSwLifecycle } from 'stellar-drive/kit';
+  import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
+
+  // ===========================================================================
+  //  Form State
+  // ===========================================================================
+
+  let supabaseUrl = $state('');
+  let supabasePublishableKey = $state('');
+  let vercelToken = $state('');
+
+  // Initial values for change detection
+  let initialSupabaseUrl = $state('');
+  let initialSupabaseKey = $state('');
+
+  // ===========================================================================
+  //  UI State
+  // ===========================================================================
+
+  let loading = $state(true);
+  let validating = $state(false);
+  let validateError = $state<string | null>(null);
+  let validateSuccess = $state(false);
+  let validatedUrl = $state('');
+  let validatedKey = $state('');
+  let deploying = $state(false);
+  let deployError = $state<string | null>(null);
+  let deployStage = $state<'idle' | 'setting-env' | 'deploying' | 'ready'>('idle');
+
+  // ===========================================================================
+  //  Derived State
+  // ===========================================================================
+
+  const supabaseChanged = $derived(
+    supabaseUrl !== initialSupabaseUrl || supabasePublishableKey !== initialSupabaseKey
+  );
+
+  const credentialsChanged = $derived(
+    validateSuccess && (supabaseUrl !== validatedUrl || supabasePublishableKey !== validatedKey)
+  );
+
+  const supabaseNeedsValidation = $derived(supabaseChanged && !validateSuccess);
+
+  const canDeploy = $derived(
+    supabaseChanged &&
+      !supabaseNeedsValidation &&
+      !credentialsChanged &&
+      !!vercelToken &&
+      !deploying &&
+      deployStage === 'idle'
+  );
+
+  // ===========================================================================
+  //  Effects
+  // ===========================================================================
+
+  $effect(() => {
+    if (credentialsChanged) {
+      validateSuccess = false;
+      validateError = null;
+    }
+  });
+
+  // ===========================================================================
+  //  Lifecycle
+  // ===========================================================================
+
+  onMount(() => {
+    if (!browser) return;
+
+    const config = getConfig();
+    if (config) {
+      supabaseUrl = config.supabaseUrl || '';
+      supabasePublishableKey = config.supabasePublishableKey || '';
+      initialSupabaseUrl = supabaseUrl;
+      initialSupabaseKey = supabasePublishableKey;
+    }
+
+    loading = false;
+  });
+
+  // ===========================================================================
+  //  Validation
+  // ===========================================================================
+
+  async function handleValidate() {
+    validateError = null;
+    validateSuccess = false;
+    validating = true;
+
+    try {
+      const res = await fetch('/api/setup/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supabaseUrl, supabasePublishableKey })
+      });
+
+      const data = await res.json();
+
+      if (data.valid) {
+        validateSuccess = true;
+        validatedUrl = supabaseUrl;
+        validatedKey = supabasePublishableKey;
+        setConfig({ supabaseUrl, supabasePublishableKey, configured: true });
+      } else {
+        validateError = data.error || 'Validation failed';
+      }
+    } catch (e) {
+      validateError = e instanceof Error ? e.message : 'Network error';
+    }
+
+    validating = false;
+  }
+
+  // ===========================================================================
+  //  Deployment
+  // ===========================================================================
+
+  function pollForDeployment(): Promise<void> {
+    return new Promise((resolve) => {
+      let resolved = false;
+
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        stopPoll();
+        stopMonitor();
+        deployStage = 'ready';
+        resolve();
+      };
+
+      const stopMonitor = monitorSwLifecycle({ onUpdateAvailable: done });
+
+      const stopPoll = pollForNewServiceWorker({
+        intervalMs: 3000,
+        maxAttempts: 200,
+        onFound: done
+      });
+
+      if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+        navigator.serviceWorker.addEventListener('controllerchange', done, { once: true });
+      }
+
+      setTimeout(() => {
+        if (!resolved) done();
+      }, 180_000);
+    });
+  }
+
+  async function handleDeploy() {
+    deployError = null;
+    deploying = true;
+    deployStage = 'setting-env';
+
+    try {
+      const res = await fetch('/api/setup/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supabaseUrl, supabasePublishableKey, vercelToken })
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        deployStage = 'deploying';
+        await pollForDeployment();
+      } else {
+        deployError = data.error || 'Deployment failed';
+        deployStage = 'idle';
+      }
+    } catch (e) {
+      deployError = e instanceof Error ? e.message : 'Network error';
+      deployStage = 'idle';
+    }
+
+    deploying = false;
+  }
+</script>
+
+<div class="reconfigure-page">
+  {#if loading}
+    <div class="loading-state">
+      <span class="loading-spinner"></span>
+      Loading configuration...
+    </div>
+  {:else}
+    <!-- Supabase Connection Card -->
+    <section class="config-card">
+      <div class="card-header">
+        <h2>Supabase Connection</h2>
+        {#if !supabaseChanged && initialSupabaseUrl}
+          <span class="status-badge status-connected">Connected</span>
+        {/if}
+      </div>
+
+      <p class="card-description">
+        Find these values in your Supabase dashboard under <strong>Settings &gt; API</strong>.
+      </p>
+
+      <div class="form-group">
+        <label for="reconfig-supabase-url">Supabase URL</label>
+        <input
+          id="reconfig-supabase-url"
+          type="url"
+          placeholder="https://your-project.supabase.co"
+          bind:value={supabaseUrl}
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="reconfig-supabase-key">Supabase Publishable Key</label>
+        <input
+          id="reconfig-supabase-key"
+          type="text"
+          placeholder="eyJhbGciOiJIUzI1NiIs..."
+          bind:value={supabasePublishableKey}
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="input-hint"
+          >This is your public (anon) key. Row-Level Security policies enforce access control.</span
+        >
+      </div>
+
+      <button
+        class="btn btn-secondary"
+        onclick={handleValidate}
+        disabled={!supabaseUrl || !supabasePublishableKey || validating}
+      >
+        {#if validating}
+          <span class="loading-spinner small"></span>
+          Testing connection...
+        {:else}
+          Test Connection
+        {/if}
+      </button>
+
+      {#if validateError}
+        <div class="message error">{validateError}</div>
+      {/if}
+      {#if validateSuccess && !credentialsChanged}
+        <div class="message success">Connection successful — credentials are valid.</div>
+      {/if}
+    </section>
+
+    <!-- Deploy Section -->
+    <section class="config-card">
+      <div class="card-header">
+        <h2>Deploy Changes</h2>
+      </div>
+
+      {#if !$isOnline}
+        <div class="message error">
+          You are currently offline. Deployment requires an internet connection.
+        </div>
+      {/if}
+
+      <div class="form-group">
+        <label for="reconfig-vercel-token">Vercel API Token</label>
+        <input
+          id="reconfig-vercel-token"
+          type="password"
+          placeholder="Paste your Vercel token"
+          bind:value={vercelToken}
+          autocomplete="off"
+          disabled={deploying || deployStage !== 'idle'}
+        />
+        <span class="input-hint">
+          Create a token at
+          <a href="https://vercel.com/account/tokens" target="_blank" rel="noopener noreferrer">
+            vercel.com/account/tokens</a
+          >. It is used once and never stored.
+        </span>
+      </div>
+
+      {#if deployStage === 'idle'}
+        <button class="btn btn-primary" onclick={handleDeploy} disabled={!canDeploy}>
+          {#if deploying}
+            <span class="loading-spinner small"></span>
+            Deploying...
+          {:else}
+            Deploy Changes
+          {/if}
+        </button>
+      {/if}
+
+      {#if deployError}
+        <div class="message error">{deployError}</div>
+      {/if}
+
+      {#if deployStage !== 'idle'}
+        <div class="deploy-steps">
+          <div
+            class="deploy-step"
+            class:active={deployStage === 'setting-env'}
+            class:complete={deployStage === 'deploying' || deployStage === 'ready'}
+          >
+            <div class="deploy-step-indicator">
+              {#if deployStage === 'setting-env'}
+                <span class="loading-spinner small"></span>
+              {:else}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              {/if}
+            </div>
+            <span>Setting environment variables...</span>
+          </div>
+
+          <div
+            class="deploy-step"
+            class:active={deployStage === 'deploying'}
+            class:complete={deployStage === 'ready'}
+          >
+            <div class="deploy-step-indicator">
+              {#if deployStage === 'deploying'}
+                <span class="loading-spinner small"></span>
+              {:else if deployStage === 'ready'}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              {:else}
+                <div class="deploy-dot"></div>
+              {/if}
+            </div>
+            <span>Deploying... (might take a bit)</span>
+          </div>
+
+          <div class="deploy-step" class:active={deployStage === 'ready'}>
+            <div class="deploy-step-indicator">
+              {#if deployStage === 'ready'}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              {:else}
+                <div class="deploy-dot"></div>
+              {/if}
+            </div>
+            <span>Ready</span>
+          </div>
+        </div>
+
+        {#if deployStage === 'ready'}
+          <div class="message success">
+            Deployment complete! Use the update prompt at the bottom of the screen to refresh. If it
+            doesn't appear, click below.
+          </div>
+          <button
+            class="btn btn-secondary"
+            onclick={() => (window.location.href = '/')}
+            style="margin-top: 0.75rem;"
+          >
+            Manually refresh &amp; go home
+          </button>
+        {/if}
+      {/if}
+    </section>
+  {/if}
+</div>
+
+<style>
+  /* ===========================================================================
+     Layout
+     =========================================================================== */
+
+  .reconfigure-page {
+    max-width: 640px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 3rem;
+    font-size: 0.9375rem;
+    color: var(--color-text-muted, #666);
+  }
+
+  /* ===========================================================================
+     Config Card
+     =========================================================================== */
+
+  .config-card {
+    padding: 1.5rem;
+    background: var(--color-surface, #fff);
+    border: 1px solid var(--color-border, #e2e2e2);
+    border-radius: 12px;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .card-header h2 {
+    margin: 0;
+    font-size: 1.0625rem;
+    font-weight: 700;
+    color: var(--color-text, #111);
+  }
+
+  .card-description {
+    margin: 0 0 1rem;
+    font-size: 0.875rem;
+    color: var(--color-text-muted, #666);
+    line-height: 1.6;
+  }
+
+  .card-description strong {
+    color: var(--color-text, #111);
+    font-weight: 600;
+  }
+
+  /* ===========================================================================
+     Status Badges
+     =========================================================================== */
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+  }
+
+  .status-connected {
+    background: var(--color-success-bg, #f0fdf4);
+    color: var(--color-success, #16a34a);
+  }
+
+  /* ===========================================================================
+     Form Elements
+     =========================================================================== */
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .form-group label {
+    font-weight: 700;
+    color: var(--color-text-muted, #666);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .form-group input {
+    width: 100%;
+    padding: 0.75rem 0.875rem;
+    font-size: 0.9375rem;
+    color: var(--color-text, #111);
+    background: var(--color-bg, #fafafa);
+    border: 1px solid var(--color-border, #e2e2e2);
+    border-radius: 8px;
+    transition: border-color 0.2s;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+
+  .form-group input:focus {
+    outline: none;
+    border-color: var(--color-primary, #3b82f6);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+  }
+
+  .form-group input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .form-group input::placeholder {
+    color: var(--color-text-muted, #999);
+    opacity: 0.6;
+  }
+
+  .input-hint {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #666);
+    opacity: 0.7;
+    line-height: 1.4;
+  }
+
+  .input-hint a {
+    color: var(--color-primary, #3b82f6);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(59, 130, 246, 0.3);
+    transition: border-color 0.2s;
+  }
+
+  .input-hint a:hover {
+    border-bottom-color: var(--color-primary, #3b82f6);
+  }
+
+  /* ===========================================================================
+     Messages
+     =========================================================================== */
+
+  .message {
+    padding: 0.875rem 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.5;
+    margin-top: 0.75rem;
+  }
+
+  .error {
+    background: var(--color-error-bg, #fef2f2);
+    color: var(--color-error, #dc2626);
+    border: 1px solid rgba(220, 38, 38, 0.2);
+  }
+
+  .success {
+    background: var(--color-success-bg, #f0fdf4);
+    color: var(--color-success, #16a34a);
+    border: 1px solid rgba(22, 163, 106, 0.2);
+  }
+
+  /* ===========================================================================
+     Buttons
+     =========================================================================== */
+
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    font-family: inherit;
+  }
+
+  .btn-primary {
+    background: var(--color-primary, #3b82f6);
+    color: white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .btn-secondary {
+    background: var(--color-secondary, #6b7280);
+    color: white;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* ===========================================================================
+     Loading Spinner
+     =========================================================================== */
+
+  .loading-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(0, 0, 0, 0.15);
+    border-top-color: var(--color-primary, #3b82f6);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+  }
+
+  .loading-spinner.small {
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* ===========================================================================
+     Deploy Steps
+     =========================================================================== */
+
+  .deploy-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+
+  .deploy-step {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-text-muted, #999);
+    opacity: 0.5;
+    transition: all 0.3s;
+  }
+
+  .deploy-step.active {
+    opacity: 1;
+    color: var(--color-primary, #3b82f6);
+  }
+
+  .deploy-step.complete {
+    opacity: 1;
+    color: var(--color-success, #16a34a);
+  }
+
+  .deploy-step-indicator {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .deploy-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--color-border, #ccc);
+    border-radius: 50%;
+  }
+
+  /* ===========================================================================
+     Responsive
+     =========================================================================== */
+
+  @media (max-width: 640px) {
+    .config-card {
+      padding: 1.25rem;
+    }
+
+    .form-group input {
+      font-size: 16px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .loading-spinner {
+      animation: none;
+    }
+
+    .btn {
+      transition: none;
+    }
+
+    .deploy-step {
+      transition: none;
     }
   }
 </style>
@@ -5278,6 +6018,7 @@ export async function run() {
                 ['src/routes/+error.svelte', generateErrorPage(opts)],
                 ['src/routes/setup/+page.ts', generateSetupPageTs()],
                 ['src/routes/setup/+page.svelte', generateSetupPageSvelte(opts)],
+                ['src/routes/setup/Reconfigure.svelte', generateReconfigureSvelte(opts)],
                 ['src/routes/policy/+page.svelte', generatePolicyPage(opts)],
                 ['src/routes/login/+page.svelte', generateLoginPage(opts)],
                 ['src/routes/confirm/+page.svelte', generateConfirmPage(opts)],
