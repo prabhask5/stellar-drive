@@ -125,6 +125,9 @@ export interface ServerConfig {
 
   /** The Supabase publishable key, if configured. */
   supabasePublishableKey?: string;
+
+  /** Additional public env vars included by the app (e.g. Teller config). */
+  extra?: Record<string, string>;
 }
 
 // =============================================================================
@@ -495,9 +498,23 @@ export function createServerSupabaseClient(prefix?: string): SupabaseClient | nu
  * export const GET = createConfigHandler();
  * ```
  */
-export function createConfigHandler() {
+export function createConfigHandler(options?: {
+  /** Extra env var names to include in the response (read from process.env at runtime). */
+  extraEnvVars?: string[];
+}) {
   return async (): Promise<Response> => {
-    return new Response(JSON.stringify(getServerConfig()), {
+    const config = getServerConfig();
+
+    if (options?.extraEnvVars?.length) {
+      const extra: Record<string, string> = {};
+      for (const key of options.extraEnvVars) {
+        const val = process.env[key];
+        if (val) extra[key] = val;
+      }
+      if (Object.keys(extra).length) config.extra = extra;
+    }
+
+    return new Response(JSON.stringify(config), {
       headers: SECURITY_HEADERS
     });
   };

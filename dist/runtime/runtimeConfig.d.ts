@@ -47,6 +47,8 @@ export interface AppConfig {
      * `false` when `/api/config` returns a "not yet configured" response.
      */
     configured: boolean;
+    /** Additional public env vars served by the config endpoint (e.g. Teller config). */
+    extra?: Record<string, string>;
 }
 /**
  * Override the localStorage key prefix used for caching config.

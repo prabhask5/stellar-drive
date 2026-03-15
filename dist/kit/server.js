@@ -358,9 +358,20 @@ export function createServerSupabaseClient(prefix) {
  * export const GET = createConfigHandler();
  * ```
  */
-export function createConfigHandler() {
+export function createConfigHandler(options) {
     return async () => {
-        return new Response(JSON.stringify(getServerConfig()), {
+        const config = getServerConfig();
+        if (options?.extraEnvVars?.length) {
+            const extra = {};
+            for (const key of options.extraEnvVars) {
+                const val = process.env[key];
+                if (val)
+                    extra[key] = val;
+            }
+            if (Object.keys(extra).length)
+                config.extra = extra;
+        }
+        return new Response(JSON.stringify(config), {
             headers: SECURITY_HEADERS
         });
     };

@@ -57,6 +57,9 @@ export interface AppConfig {
    * `false` when `/api/config` returns a "not yet configured" response.
    */
   configured: boolean;
+
+  /** Additional public env vars served by the config endpoint (e.g. Teller config). */
+  extra?: Record<string, string>;
 }
 
 // =============================================================================
@@ -382,7 +385,8 @@ export async function initConfig(): Promise<AppConfig | null> {
           const config: AppConfig = {
             supabaseUrl: serverConfig.supabaseUrl,
             supabasePublishableKey: serverConfig.supabasePublishableKey,
-            configured: true
+            configured: true,
+            ...(serverConfig.extra ? { extra: serverConfig.extra } : {})
           };
           configCache = config;
           saveToCache(config);

@@ -84,6 +84,8 @@ export interface ServerConfig {
     supabaseUrl?: string;
     /** The Supabase publishable key, if configured. */
     supabasePublishableKey?: string;
+    /** Additional public env vars included by the app (e.g. Teller config). */
+    extra?: Record<string, string>;
 }
 export declare function getServerConfig(): ServerConfig;
 /**
@@ -197,7 +199,10 @@ export declare function createServerSupabaseClient(prefix?: string): SupabaseCli
  * export const GET = createConfigHandler();
  * ```
  */
-export declare function createConfigHandler(): () => Promise<Response>;
+export declare function createConfigHandler(options?: {
+    /** Extra env var names to include in the response (read from process.env at runtime). */
+    extraEnvVars?: string[];
+}): () => Promise<Response>;
 export declare function createValidateHandler(): ({ request, url }: {
     request: Request;
     url: URL;
