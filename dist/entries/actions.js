@@ -26,4 +26,11 @@ export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from '../a
 // A Svelte action that detects CSS text-overflow (ellipsis) on an element and
 // attaches a native `title` tooltip showing the full text when truncated.
 export { truncateTooltip } from '../actions/truncateTooltip';
+// =============================================================================
+//  Scroll Guard
+// =============================================================================
+// A Svelte action that prevents accidental click/tap events during scroll on
+// mobile. Apply to a scrollable container (e.g. `<main use:scrollGuard>`) so
+// that touches that turn into scrolls never fire child onclick handlers.
+export { scrollGuard } from '../actions/scrollGuard';
 //# sourceMappingURL=actions.js.map

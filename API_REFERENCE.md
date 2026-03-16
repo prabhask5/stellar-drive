@@ -57,6 +57,7 @@ Complete reference for every public export from the `stellar-drive` package. Thi
   - [trackEditing](#trackediting)
   - [triggerLocalAnimation](#triggerlocalanimation)
   - [truncateTooltip](#truncatetooltip)
+  - [scrollGuard](#scrollguard)
 - [Utilities (`stellar-drive/utils`)](#utilities)
   - [General Utilities](#general-utilities)
   - [Debug Utilities](#debug-utilities)
@@ -2982,6 +2983,31 @@ function truncateTooltip(node: HTMLElement): { destroy: () => void }
 <span class="truncate" use:truncateTooltip>
   This is a very long text that will be truncated with an ellipsis
 </span>
+```
+
+---
+
+### `scrollGuard`
+
+A Svelte action that prevents accidental click/tap events during scroll on mobile. When the user's finger moves beyond a 10px threshold during a touch interaction, the resulting synthetic click event is suppressed so child `onclick` handlers never fire.
+
+Best applied to the root layout's `<main>` element so all pages are protected globally.
+
+**Signature:**
+```ts
+function scrollGuard(node: HTMLElement): { destroy: () => void }
+```
+
+**Example:**
+```svelte
+<script>
+  import { scrollGuard } from 'stellar-drive/actions';
+</script>
+
+<main use:scrollGuard>
+  <!-- All child click handlers are protected from scroll-triggered taps -->
+  {@render children?.()}
+</main>
 ```
 
 ---

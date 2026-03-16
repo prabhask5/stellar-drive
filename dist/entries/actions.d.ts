@@ -13,4 +13,5 @@
  */
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from '../actions/remoteChange';
 export { truncateTooltip } from '../actions/truncateTooltip';
+export { scrollGuard } from '../actions/scrollGuard';
 //# sourceMappingURL=actions.d.ts.map
