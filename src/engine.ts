@@ -1478,11 +1478,125 @@ async function pushPendingOps(): Promise<PushStats> {
       }
     }
 
-    // ── Process non-create operations individually ──
-    for (const item of nonCreateItems) {
+    // ── Batch non-create operations: group by table and UPSERT in bulk ──
+    // For set/delete/increment on non-singleton tables, read the full local entity
+    // from IndexedDB and upsert in batches. This turns N sequential HTTP requests
+    // into ceil(N/500) batch calls. Singleton tables need special ID reconciliation
+    // and must be processed individually.
+    const batchableItems = nonCreateItems.filter((item) => !isSingletonTable(item.table));
+    const individualItems = nonCreateItems.filter((item) => isSingletonTable(item.table));
+
+    if (batchableItems.length > 0) {
+      // Group by table
+      const itemsByTable = new Map<string, SyncOperationItem[]>();
+      for (const item of batchableItems) {
+        if (item.id) {
+          const stillQueued = await db.table('syncQueue').get(item.id);
+          if (!stillQueued) continue;
+        }
+        const existing = itemsByTable.get(item.table) || [];
+        existing.push(item);
+        itemsByTable.set(item.table, existing);
+      }
+
+      for (const [tableName, items] of itemsByTable) {
+        const supabase = getSupabase();
+        const deviceId = getDeviceId();
+        const dexieTable = getDexieTableName(tableName);
+
+        // Build batch payload from local IndexedDB state (full entity rows).
+        // For deletes, the local entity already has `deleted: true`.
+        // For increments, the local entity already has the final computed value.
+        // For sets, the local entity already has the updated fields.
+        const payloads: Record<string, unknown>[] = [];
+        const validItems: SyncOperationItem[] = [];
+        for (const item of items) {
+          const localEntity = await db.table(dexieTable).get(item.entityId);
+          if (!localEntity) {
+            // Entity deleted locally — for delete ops this is expected (already gone),
+            // for others skip it
+            if (item.operationType === 'delete') {
+              // Still need to ensure server-side deletion; fall back to individual
+              try {
+                await processSyncItem(item);
+                if (item.id) {
+                  await removeSyncItem(item.id);
+                  processedAny = true;
+                  actualPushed++;
+                }
+              } catch (itemError) {
+                handleSyncItemError(item, itemError);
+              }
+            }
+            continue;
+          }
+          // Strip internal Dexie fields, add device_id
+          const payload = { ...localEntity, device_id: deviceId };
+          delete (payload as Record<string, unknown>)._version;
+          payloads.push(payload);
+          validItems.push(item);
+        }
+
+        if (payloads.length === 0) continue;
+
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < payloads.length; i += BATCH_SIZE) {
+          const batch = payloads.slice(i, i + BATCH_SIZE);
+          const batchItems = validItems.slice(i, i + BATCH_SIZE);
+
+          try {
+            debugLog(`[SYNC] Batch upsert ${batch.length} rows into ${tableName}`);
+            const { error } = await supabase
+              .from(tableName)
+              .upsert(batch, { onConflict: 'id', ignoreDuplicates: false });
+
+            if (error) {
+              // Batch failed — fall back to individual processing
+              debugError(`[SYNC] Batch upsert failed for ${tableName}:`, error);
+              for (const item of batchItems) {
+                try {
+                  await processSyncItem(item);
+                  if (item.id) {
+                    await removeSyncItem(item.id);
+                    processedAny = true;
+                    actualPushed++;
+                  }
+                } catch (itemError) {
+                  handleSyncItemError(item, itemError);
+                }
+              }
+            } else {
+              for (const item of batchItems) {
+                if (item.id) {
+                  await removeSyncItem(item.id);
+                  processedAny = true;
+                  actualPushed++;
+                }
+              }
+              debugLog(`[SYNC] Batch upsert success: ${batch.length} rows into ${tableName}`);
+            }
+          } catch (batchError) {
+            debugError(`[SYNC] Batch upsert threw for ${tableName}:`, batchError);
+            for (const item of batchItems) {
+              try {
+                await processSyncItem(item);
+                if (item.id) {
+                  await removeSyncItem(item.id);
+                  processedAny = true;
+                  actualPushed++;
+                }
+              } catch (itemError) {
+                handleSyncItemError(item, itemError);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ── Process singleton table operations individually (need ID reconciliation) ──
+    for (const item of individualItems) {
       try {
-        // Skip items that were purged from the queue during reconciliation
-        // (e.g. singleton ID reconciliation deletes old queued ops)
         if (item.id) {
           const stillQueued = await db.table('syncQueue').get(item.id);
           if (!stillQueued) {
