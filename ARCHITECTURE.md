@@ -1580,11 +1580,13 @@ Generates complete Supabase SQL from a declarative schema. Accepts a `prefix` op
 
 Generated output includes:
 - `CREATE TABLE` statements with system columns (`id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`, `device_id`) -- table names are prefixed (e.g., `stellar_goals`)
+- Convergent column migration: add new columns, converge types/nullability/defaults on existing columns, drop stale columns no longer in the schema
 - Row-Level Security (RLS) policies per table
 - `updated_at` trigger (auto-update on modification)
 - `set_user_id` trigger (auto-set `user_id` from `auth.uid()`)
 - Indexes for common query patterns
 - Unique constraint indexes (from `uniqueConstraints` config)
+- `DROP TABLE` for tables removed from the schema (via `previousTables` discovery)
 - Realtime subscription enablement
 - Optional: `trusted_devices` table, helper functions
 
@@ -1937,9 +1939,10 @@ Migrations are pushed via a **direct Postgres connection** using the `DATABASE_U
 
 ### 18.5 Migration Safety
 
-- **Additive operations** (new tables, new columns) are applied automatically.
-- **Destructive operations** (DROP TABLE, DROP COLUMN) are generated as **comments**, requiring manual review and execution.
-- **Type changes** (e.g., `text` -> `integer`) are not detected and require manual migration.
+- **Additive operations** (new tables, new columns) are applied automatically via `CREATE TABLE IF NOT EXISTS` and `ADD COLUMN IF NOT EXISTS`.
+- **Column convergence** -- existing columns are converged to match the schema: type (`ALTER COLUMN ... TYPE`), nullability (`SET/DROP NOT NULL`), and defaults (`SET/DROP DEFAULT`) are all updated.
+- **Stale column removal** -- columns that exist in the live table but are no longer declared in the schema are automatically dropped via a PL/pgSQL introspection block. System columns (`id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`, `device_id`) are never dropped.
+- **Table removal** -- tables present in the database but removed from the schema are dropped when detected by `discoverExistingTables()`.
 - **Renames** (via `renamedFrom` and `renamedColumns`) produce proper `ALTER TABLE ... RENAME` statements.
 
 ### 18.6 Generated Files

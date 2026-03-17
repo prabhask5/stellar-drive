@@ -533,6 +533,30 @@ function generateTableSQL(tableName, config, options) {
             lines.push(`alter table ${tableName} alter column ${colName} drop default;`);
         }
     }
+    /* ── Drop stale columns ────────────────────────────────────────────────
+       Columns that exist in the live table but are NOT in the current schema
+       are leftovers from a previous version. Generate a PL/pgSQL block that
+       introspects information_schema.columns and drops any that don't belong.
+       System columns and the primary key are always retained. */
+    const expectedCols = new Set();
+    for (const [colName] of SYSTEM_COLUMNS) {
+        if (colName === 'user_id' && isChildTable)
+            continue;
+        expectedCols.add(colName);
+    }
+    for (const field of emittedFields) {
+        expectedCols.add(field);
+    }
+    const expectedColsLiteral = [...expectedCols].map((c) => `'${c}'`).join(', ');
+    lines.push(`do $$ declare _col text; begin`);
+    lines.push(`  for _col in`);
+    lines.push(`    select column_name from information_schema.columns`);
+    lines.push(`    where table_schema = 'public' and table_name = '${tableName}'`);
+    lines.push(`      and column_name not in (${expectedColsLiteral})`);
+    lines.push(`  loop`);
+    lines.push(`    execute format('alter table ${tableName} drop column if exists %I', _col);`);
+    lines.push(`  end loop;`);
+    lines.push(`end $$;`);
     lines.push('');
     /* ---- ROW LEVEL SECURITY ---- */
     lines.push(`alter table ${tableName} enable row level security;`);

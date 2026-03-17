@@ -3415,11 +3415,12 @@ The generated SQL includes:
 
 1. Extensions (`uuid-ossp`)
 2. Helper trigger functions (`set_user_id`, `update_updated_at_column`)
-3. One `CREATE TABLE` block per schema table (with columns, RLS policies, triggers, indexes)
-4. `trusted_devices` table (unless `includeDeviceVerification: false`)
-5. Supabase Realtime publication for all tables
-6. Unique constraint indexes (when `uniqueConstraints` is configured)
-7. Storage bucket policies (if configured)
+3. One `CREATE TABLE` block per schema table (with convergent column migration: add/update/drop columns, RLS policies, triggers, indexes)
+4. `DROP TABLE` for removed tables (detected via `previousTables` discovery)
+5. `trusted_devices` table (unless `includeDeviceVerification: false`)
+6. Supabase Realtime publication for all tables
+7. Unique constraint indexes (when `uniqueConstraints` is configured)
+8. Storage bucket policies (if configured)
 
 **Column Type Inference**
 
@@ -3524,7 +3525,15 @@ All tables are added to the `supabase_realtime` publication so that Supabase Rea
 
 **Convergent Migrations**
 
-All generated SQL is idempotent. Tables use `CREATE TABLE IF NOT EXISTS`, indexes use `CREATE INDEX IF NOT EXISTS`, triggers use `DROP TRIGGER IF EXISTS` before `CREATE TRIGGER`, and policies use `DROP POLICY IF EXISTS` before `CREATE POLICY`. You can re-run the full output at any time without errors.
+All generated SQL is fully convergent and idempotent. The schema push ensures the live database matches the declared schema exactly:
+
+- **Create**: Tables use `CREATE TABLE IF NOT EXISTS`, columns use `ADD COLUMN IF NOT EXISTS`.
+- **Update**: Column types, nullability, and defaults are converged via `ALTER COLUMN ... TYPE`, `SET/DROP NOT NULL`, and `SET/DROP DEFAULT`.
+- **Drop columns**: Columns that exist in the live table but are no longer declared in the schema are automatically dropped via `ALTER TABLE ... DROP COLUMN`. System columns (`id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`, `device_id`) are never dropped.
+- **Drop tables**: Tables present in the database but removed from the schema are dropped when detected by `previousTables` discovery (via `discoverExistingTables`).
+- **Triggers/Policies/Indexes**: Use `DROP ... IF EXISTS` before `CREATE` to ensure clean recreation.
+
+You can re-run the full output at any time without errors.
 
 **Table Prefixing**
 
