@@ -575,6 +575,15 @@ function generateTableSQL(tableName, config, options) {
     }
     lines.push(`create index if not exists idx_${tableName}_updated_at on ${tableName}(updated_at);`);
     lines.push(`create index if not exists idx_${tableName}_deleted on ${tableName}(deleted) where deleted = false;`);
+    /* ---- UNIQUE CONSTRAINTS ---- */
+    if (config.uniqueConstraints && config.uniqueConstraints.length > 0) {
+        for (const constraint of config.uniqueConstraints) {
+            const cols = constraint.columns.join(', ');
+            const name = `idx_${tableName}_${constraint.columns.join('_')}_unique`;
+            const whereClause = constraint.where ? ` where ${constraint.where}` : '';
+            lines.push(`create unique index if not exists ${name} on ${tableName}(${cols})${whereClause};`);
+        }
+    }
     lines.push('');
     /* ---- REALTIME ---- */
     lines.push(`do $$ begin alter publication supabase_realtime add table ${tableName}; exception when duplicate_object then null; end $$;`);

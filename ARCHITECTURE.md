@@ -1584,6 +1584,7 @@ Generated output includes:
 - `updated_at` trigger (auto-update on modification)
 - `set_user_id` trigger (auto-set `user_id` from `auth.uid()`)
 - Indexes for common query patterns
+- Unique constraint indexes (from `uniqueConstraints` config)
 - Realtime subscription enablement
 - Optional: `trusted_devices` table, helper functions
 
@@ -1613,6 +1614,29 @@ Generates `ALTER TABLE` statements for:
 ### 14.4 `generateTypeScript(schema, options)`
 
 Generates TypeScript interfaces from schema field definitions. Each table gets an interface with typed fields. System columns (`id`, `user_id`, `created_at`, etc.) are optionally included.
+
+### 14.5 Unique Constraints
+
+Tables can declare `uniqueConstraints` to enforce uniqueness at the database level. Each constraint generates a `CREATE UNIQUE INDEX IF NOT EXISTS` statement. Partial unique indexes are supported via the optional `where` clause.
+
+```ts
+transactions: {
+  indexes: 'account_id, date',
+  uniqueConstraints: [
+    { columns: ['teller_transaction_id'], where: 'teller_transaction_id is not null' }
+  ]
+}
+```
+
+This produces:
+
+```sql
+create unique index if not exists idx_transactions_teller_transaction_id_unique
+  on transactions(teller_transaction_id)
+  where teller_transaction_id is not null;
+```
+
+The index name follows the pattern `idx_{tableName}_{columns joined by _}_unique`. Multi-column constraints are supported (e.g., `{ columns: ['user_id', 'slug'] }`). The `where` clause enables partial indexes -- for example, enforcing uniqueness only on non-null values of an optional foreign key.
 
 ---
 

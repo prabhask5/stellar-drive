@@ -3409,25 +3409,126 @@ Generate complete Supabase SQL and TypeScript interfaces from a declarative sche
 
 #### `generateSupabaseSQL(schema, options?)`
 
-Generates a complete, idempotent SQL file that can be pasted directly into the Supabase SQL Editor to bootstrap the entire database. The generated SQL includes:
+Generates a complete, idempotent SQL file that can be pasted directly into the Supabase SQL Editor to bootstrap the entire database. All statements use `IF NOT EXISTS` / `DROP ... IF EXISTS` so the output is safe to re-run (convergent migration).
+
+The generated SQL includes:
 
 1. Extensions (`uuid-ossp`)
 2. Helper trigger functions (`set_user_id`, `update_updated_at_column`)
 3. One `CREATE TABLE` block per schema table (with columns, RLS policies, triggers, indexes)
 4. `trusted_devices` table (unless `includeDeviceVerification: false`)
 5. Supabase Realtime publication for all tables
+6. Unique constraint indexes (when `uniqueConstraints` is configured)
 7. Storage bucket policies (if configured)
 
-Column types are inferred from field naming conventions:
+**Column Type Inference**
 
-| Pattern | SQL Type |
+Column types are inferred from field naming conventions. You can override any inference with `sqlColumns` on the table config.
+
+| Pattern | SQL Type | Example |
+|---|---|---|
+| `*_id` | `uuid` | `project_id` |
+| `*_at` | `timestamptz` | `completed_at` |
+| `order` | `double precision default 0` | `order` |
+| `*_count`, `*_value`, `*_size`, `*_ms`, `*_duration` | `integer default 0` | `retry_count`, `file_size`, `elapsed_ms` |
+| `is_*`, `completed`, `deleted`, `active`, `enabled` | `boolean default false` | `is_archived`, `completed` |
+| `_version` | `integer default 1` | `_version` |
+| `date` | `date` | `date` |
+| `status`, `type`, `section` | `text` | `status` (recognized enum-like names) |
+| `*_url`, `*_path` | `text` | `avatar_url`, `file_path` |
+| Everything else | `text` | `title`, `description` |
+
+**System Columns**
+
+Every table automatically receives these columns (you never declare them in your schema):
+
+| Column | Definition | Notes |
+|---|---|---|
+| `id` | `uuid primary key default uuid_generate_v4()` | Primary key. |
+| `user_id` | `uuid not null references auth.users(id)` | Row owner. Omitted for child tables that use `ownership: { parent, fk }`. |
+| `created_at` | `timestamptz not null default now()` | Immutable creation timestamp. |
+| `updated_at` | `timestamptz not null default now()` | Auto-updated by trigger on every write. |
+| `deleted` | `boolean not null default false` | Soft-delete tombstone flag. |
+| `_version` | `integer not null default 1` | Optimistic concurrency counter. |
+| `device_id` | `text` | Echo suppression for realtime updates. |
+
+**Ownership and RLS**
+
+Row-Level Security policies are generated automatically. The `ownership` option controls how ownership is determined:
+
+| Mode | Config | Behavior |
+|---|---|---|
+| Default | `ownership: 'user_id'` (or omitted) | Each row has a `user_id` column. RLS policy: `auth.uid() = user_id`. |
+| Custom column | `ownership: 'team_id'` | RLS policy uses the specified column instead of `user_id`. |
+| Child table | `ownership: { parent: 'projects', fk: 'project_id' }` | No `user_id` on the child. RLS joins to the parent table to verify ownership: `EXISTS (SELECT 1 FROM projects WHERE projects.id = child.project_id AND projects.user_id = auth.uid())`. |
+
+**Unique Constraints**
+
+Use `uniqueConstraints` on a table config to generate unique indexes at the database level. Each constraint becomes a `CREATE UNIQUE INDEX IF NOT EXISTS` statement. Partial unique indexes are supported via the optional `where` clause.
+
+```ts
+// Prevent duplicate Teller transaction IDs (only when non-null):
+transactions: {
+  indexes: 'account_id, date',
+  uniqueConstraints: [
+    { columns: ['teller_transaction_id'], where: 'teller_transaction_id is not null' }
+  ]
+}
+
+// Multi-column uniqueness:
+pages: {
+  indexes: 'project_id',
+  uniqueConstraints: [
+    { columns: ['user_id', 'slug'] }
+  ]
+}
+```
+
+Generated SQL:
+
+```sql
+create unique index if not exists idx_transactions_teller_transaction_id_unique
+  on transactions(teller_transaction_id)
+  where teller_transaction_id is not null;
+
+create unique index if not exists idx_pages_user_id_slug_unique
+  on pages(user_id, slug);
+```
+
+**Triggers**
+
+Two triggers are attached to every table:
+
+| Trigger | Function | Purpose |
+|---|---|---|
+| `set_user_id` | `set_user_id()` | On `INSERT`, sets `user_id` to `auth.uid()` so clients cannot spoof ownership. |
+| `update_updated_at_column` | `update_updated_at_column()` | On `UPDATE`, sets `updated_at` to `now()` so sync can order changes. |
+
+Helper functions are included by default (disable with `includeHelperFunctions: false`).
+
+**Indexes**
+
+Every table receives three indexes automatically:
+
+| Index | Definition |
 |---|---|
-| `*_id` | `uuid` |
-| `*_at` | `timestamptz` |
-| `order` | `double precision default 0` |
-| `*_count`, `*_value` | `integer default 0` |
-| `is_*`, `completed`, `deleted` | `boolean default false` |
-| Everything else | `text` |
+| `idx_{table}_user_id` | `on {table}(user_id)` — fast user-scoped queries. |
+| `idx_{table}_updated_at` | `on {table}(updated_at)` — sync delta queries. |
+| `idx_{table}_deleted` | `on {table}(deleted) where deleted = false` — partial index for active-row queries. |
+
+Additional indexes from the `indexes` config string are also created.
+
+**Realtime**
+
+All tables are added to the `supabase_realtime` publication so that Supabase Realtime pushes row changes to connected clients.
+
+**Convergent Migrations**
+
+All generated SQL is idempotent. Tables use `CREATE TABLE IF NOT EXISTS`, indexes use `CREATE INDEX IF NOT EXISTS`, triggers use `DROP TRIGGER IF EXISTS` before `CREATE TRIGGER`, and policies use `DROP POLICY IF EXISTS` before `CREATE POLICY`. You can re-run the full output at any time without errors.
+
+**Table Prefixing**
+
+When the `prefix` option is set, all generated table names, RLS policy names, trigger names, and index names are prefixed with `{prefix}_`. For example, with `prefix: 'myapp'`, a `tasks` table becomes `myapp_tasks`. Auto-migration SQL is also generated to rename legacy unprefixed tables (e.g., `ALTER TABLE tasks RENAME TO myapp_tasks`) for backward compatibility.
 
 **Signature:**
 ```ts
@@ -3442,9 +3543,10 @@ function generateSupabaseSQL(
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `appName` | `string` | — | Application name for SQL comments. |
-| `prefix` | `string` | — | Table name prefix for multi-tenant setups. |
+| `prefix` | `string` | — | Table name prefix (e.g., `'myapp'` causes `tasks` to become `myapp_tasks`). |
 | `includeDeviceVerification` | `boolean` | `true` | Include `trusted_devices` table. |
 | `includeHelperFunctions` | `boolean` | `true` | Include trigger helper functions. |
+| `previousTables` | `string[]` | — | Table names from previous schema version, used to generate `DROP TABLE ... CASCADE` statements for removed tables. Pass raw snake_case names (unprefixed). |
 | `storage.buckets` | `StorageBucketConfig[]` | — | Storage buckets to create with RLS policies. |
 
 **Example:**
@@ -3453,11 +3555,23 @@ import { generateSupabaseSQL } from 'stellar-drive/utils';
 
 const sql = generateSupabaseSQL({
   tasks: 'project_id, order',
-  projects: { indexes: 'order', sqlColumns: { name: 'text not null' } },
-  user_settings: { singleton: true }
+  projects: {
+    indexes: 'order',
+    fields: { name: 'string', type: ['work', 'personal'] },
+    sqlColumns: { name: 'text not null' },
+    uniqueConstraints: [
+      { columns: ['user_id', 'name'] }
+    ]
+  },
+  user_settings: { singleton: true },
+  task_comments: {
+    indexes: 'task_id',
+    ownership: { parent: 'tasks', fk: 'task_id' }
+  }
 }, {
   appName: 'My App',
   prefix: 'myapp',
+  previousTables: ['old_notes'],
   storage: {
     buckets: [
       { name: 'avatars', public: true, maxFileSize: 2097152, allowedMimeTypes: ['image/png', 'image/jpeg'] }
@@ -4728,6 +4842,13 @@ interface SchemaTableConfig {
   fields?: Record<string, FieldType>;
   /** Override the auto-generated PascalCase interface name. */
   typeName?: string;
+  /** Unique constraints enforced at the database level. */
+  uniqueConstraints?: Array<{
+    /** Column(s) that form the unique constraint. */
+    columns: string[];
+    /** Optional SQL WHERE clause for partial unique indexes. */
+    where?: string;
+  }>;
 }
 ```
 

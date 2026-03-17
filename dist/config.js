@@ -304,7 +304,23 @@ function generateDatabaseFromSchema(schema, prefix, databaseName) {
         const dexieName = config.dexieName || snakeToCamel(tableName);
         /* Merge system indexes with app-specific indexes. */
         const appIndexes = (config.indexes || '').trim();
-        stores[dexieName] = appIndexes ? `${SYSTEM_INDEXES}, ${appIndexes}` : SYSTEM_INDEXES;
+        let storeSchema = appIndexes ? `${SYSTEM_INDEXES}, ${appIndexes}` : SYSTEM_INDEXES;
+        /* Add Dexie unique indexes (&col) for single-column unique constraints
+           that are NOT partial (no `where` clause). Partial unique constraints
+           can't be expressed in IndexedDB — they're enforced server-side only.
+           Multi-column constraints are also server-side only. */
+        if (config.uniqueConstraints) {
+            const existingIndexes = new Set(storeSchema.split(',').map((s) => s.trim().replace(/^[&*]/, '')));
+            for (const constraint of config.uniqueConstraints) {
+                if (constraint.columns.length === 1 && !constraint.where) {
+                    const col = constraint.columns[0];
+                    if (!existingIndexes.has(col)) {
+                        storeSchema += `, &${col}`;
+                    }
+                }
+            }
+        }
+        stores[dexieName] = storeSchema;
     }
     /* Compute auto-version based on the merged store schema. */
     const result = computeSchemaVersion(prefix, stores);

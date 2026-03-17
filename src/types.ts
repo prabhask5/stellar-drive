@@ -319,6 +319,34 @@ export interface SchemaTableConfig {
   fields?: Record<string, FieldType>;
   /** Override the auto-generated PascalCase interface name (e.g., `'LongTermTask'`). */
   typeName?: string;
+  /**
+   * Unique constraints to enforce at the database level.
+   *
+   * Each entry generates a `CREATE UNIQUE INDEX IF NOT EXISTS` statement in
+   * the Supabase SQL output. Use `where` for partial unique indexes (e.g.,
+   * only enforce uniqueness on non-null values).
+   *
+   * In Dexie (IndexedDB), single-column unique constraints are enforced via
+   * the `&` prefix on the index. Multi-column constraints are advisory only
+   * in IndexedDB (enforced server-side).
+   *
+   * @example
+   * // Single column, partial (only non-null values):
+   * uniqueConstraints: [
+   *   { columns: ['teller_transaction_id'], where: 'teller_transaction_id is not null' }
+   * ]
+   *
+   * // Multi-column:
+   * uniqueConstraints: [
+   *   { columns: ['user_id', 'slug'] }
+   * ]
+   */
+  uniqueConstraints?: Array<{
+    /** Column(s) that form the unique constraint. */
+    columns: string[];
+    /** Optional SQL WHERE clause for partial unique indexes. */
+    where?: string;
+  }>;
 }
 
 /**
