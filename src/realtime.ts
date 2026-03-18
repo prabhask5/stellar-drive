@@ -448,15 +448,62 @@ function setConnectionState(newState: RealtimeConnectionState, error?: string): 
  *
  * @see {@link onRealtimeDataUpdate} for the public subscription API
  */
+/** Pending notifications collected during rapid-fire realtime events. */
+const pendingNotifications = new Map<string, Set<string>>();
+let notifyDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Debounce interval for batching rapid realtime notifications. */
+const NOTIFY_DEBOUNCE_MS = 50;
+
+/**
+ * Schedule a batched notification for a table/entity change.
+ *
+ * Instead of notifying subscribers immediately for every CDC event, changes are
+ * collected into a pending set and flushed after a short debounce window. This
+ * prevents hundreds of redundant store refreshes when a batch push triggers
+ * hundreds of echo-suppressed CDC events in quick succession.
+ *
+ * @param table    - The schema key of the changed table.
+ * @param entityId - The UUID of the changed entity.
+ *
+ * @see {@link onRealtimeDataUpdate} for the public subscription API
+ */
 function notifyDataUpdate(table: string, entityId: string): void {
+  let entities = pendingNotifications.get(table);
+  if (!entities) {
+    entities = new Set();
+    pendingNotifications.set(table, entities);
+  }
+  entities.add(entityId);
+
+  if (notifyDebounceTimer) return;
+  notifyDebounceTimer = setTimeout(flushPendingNotifications, NOTIFY_DEBOUNCE_MS);
+}
+
+/**
+ * Flush all pending notifications to subscribers.
+ *
+ * For each table with pending changes, every subscriber is called once with
+ * a representative entity ID (the first in the set). Subscribers typically
+ * refresh the entire table/store anyway, so notifying per-entity is wasteful.
+ */
+function flushPendingNotifications(): void {
+  notifyDebounceTimer = null;
+  const snapshot = new Map(pendingNotifications);
+  pendingNotifications.clear();
+
   debugLog(
-    `[Realtime] Notifying ${dataUpdateCallbacks.size} subscribers of update: ${table}/${entityId}`
+    `[Realtime] Flushing batched notifications: ${[...snapshot.entries()].map(([t, ids]) => `${t}(${ids.size})`).join(', ')}`
   );
-  for (const callback of dataUpdateCallbacks) {
-    try {
-      callback(table, entityId);
-    } catch (e) {
-      debugError('[Realtime] Data update callback error:', e);
+
+  for (const [table, entityIds] of snapshot) {
+    const firstId = entityIds.values().next().value;
+    for (const callback of dataUpdateCallbacks) {
+      try {
+        callback(table, firstId!);
+      } catch (e) {
+        debugError('[Realtime] Data update callback error:', e);
+      }
     }
   }
 }

@@ -10,8 +10,8 @@
  *
  * ```
  * ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
- * │   UI Layer   │────▶│  Local DB    │────▶│  Sync Engine │────▶ Supabase
- * │  (instant)   │◀────│  (IndexedDB) │◀────│  (background)│◀──── (remote)
+ * │  UI Layer   │────▶│   Local DB   │────▶│ Sync Engine  │────▶ Supabase
+ * │  (instant)  │◀────│  (IndexedDB) │◀────│ (background) │◀──── (remote)
  * └─────────────┘     └──────────────┘     └──────────────┘
  * ```
  *

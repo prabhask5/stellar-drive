@@ -575,7 +575,7 @@ acquireSyncLock()  ------> Lock held? Check stale (>60s) -> force release or ski
    |     +-> delete: UPDATE    |
    |         (deleted=true)    |
    |   On success:             |
-   |     removeSyncItem()      |  <-- Dequeue
+   |     bulkRemoveSyncItems() |  <-- Batch dequeue (1 IDB txn)
    |   On failure:             |
    |     incrementRetry()      |  <-- Backoff
    |                           |
@@ -1080,6 +1080,31 @@ A `reconnectScheduled` flag prevents duplicate reconnect attempts when both `CHA
 
 - **Pause when offline**: `pauseRealtime()` is called when the network goes down. No reconnect timers fire. The userId is preserved for seamless resumption.
 - **Resume on online**: When the `online` event fires, realtime subscriptions are re-established with the same userId.
+
+### 8.9 Debounced Notification Batching
+
+When a batch push writes N records, Supabase emits N individual CDC events. Without batching, each event triggers a separate `notifyDataUpdate` call, causing N store refreshes (e.g., 500 transactions = 500 UI re-renders).
+
+The realtime module coalesces these into a single notification per table using a **50ms debounce window**:
+
+```
+CDC Event 1 (table: transactions, id: abc)
+  --> Add to pendingNotifications Map<table, Set<entityId>>
+  --> Start 50ms timer (if not already running)
+
+CDC Event 2 (table: transactions, id: def)  [arrives 5ms later]
+  --> Add to pendingNotifications (same table set)
+  --> Timer already running, skip
+
+... [50ms elapses] ...
+
+flushPendingNotifications()
+  --> Snapshot & clear pendingNotifications
+  --> For each table: fire ONE callback (not N)
+  --> UI refreshes once per table, not once per record
+```
+
+This reduces store refresh count from O(N) to O(tables) for batch operations, eliminating the timeout/flooding issue when importing large datasets.
 - **Connection state tracking**: The `RealtimeConnectionState` type tracks `'disconnected' | 'connecting' | 'connected' | 'error'`, exposed via `syncStatusStore.setRealtimeState()` for UI display.
 
 ---

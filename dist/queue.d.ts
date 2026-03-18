@@ -170,6 +170,16 @@ export declare function cleanupFailedItems(): Promise<{
  */
 export declare function removeSyncItem(id: number): Promise<void>;
 /**
+ * Remove multiple sync operations from the queue in a single Dexie transaction.
+ *
+ * This is the batch counterpart to {@link removeSyncItem}. After a successful
+ * batch upsert, calling this once with all processed IDs is significantly faster
+ * than calling `removeSyncItem` in a loop (one IndexedDB transaction vs. N).
+ *
+ * @param ids - Array of auto-increment primary keys to remove.
+ */
+export declare function bulkRemoveSyncItems(ids: number[]): Promise<void>;
+/**
  * Increment the retry counter and record the current time as the last retry
  * attempt for a sync operation that failed to push.
  *

@@ -10,8 +10,8 @@
  *
  * ```
  * ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
- * │   UI Layer   │────▶│  Local DB    │────▶│  Sync Engine │────▶ Supabase
- * │  (instant)   │◀────│  (IndexedDB) │◀────│  (background)│◀──── (remote)
+ * │  UI Layer   │────▶│   Local DB   │────▶│ Sync Engine  │────▶ Supabase
+ * │  (instant)  │◀────│  (IndexedDB) │◀────│ (background) │◀──── (remote)
  * └─────────────┘     └──────────────┘     └──────────────┘
  * ```
  *
@@ -66,6 +66,7 @@ import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import {
   getPendingSync,
   removeSyncItem,
+  bulkRemoveSyncItems,
   incrementRetry,
   getPendingEntityIds,
   cleanupFailedItems,
@@ -1448,13 +1449,12 @@ async function pushPendingOps(): Promise<PushStats> {
                 }
               }
             } else {
-              // Batch succeeded — remove all items from queue
-              for (const item of batchItems) {
-                if (item.id) {
-                  await removeSyncItem(item.id);
-                  processedAny = true;
-                  actualPushed++;
-                }
+              // Batch succeeded — bulk-remove all items from queue in one transaction
+              const idsToRemove = batchItems.filter((item) => item.id).map((item) => item.id!);
+              if (idsToRemove.length > 0) {
+                await bulkRemoveSyncItems(idsToRemove);
+                processedAny = true;
+                actualPushed += idsToRemove.length;
               }
               debugLog(`[SYNC] Batch upsert success: ${batch.length} rows into ${tableName}`);
             }
@@ -1566,12 +1566,12 @@ async function pushPendingOps(): Promise<PushStats> {
                 }
               }
             } else {
-              for (const item of batchItems) {
-                if (item.id) {
-                  await removeSyncItem(item.id);
-                  processedAny = true;
-                  actualPushed++;
-                }
+              // Batch succeeded — bulk-remove all items from queue in one transaction
+              const idsToRemove = batchItems.filter((item) => item.id).map((item) => item.id!);
+              if (idsToRemove.length > 0) {
+                await bulkRemoveSyncItems(idsToRemove);
+                processedAny = true;
+                actualPushed += idsToRemove.length;
               }
               debugLog(`[SYNC] Batch upsert success: ${batch.length} rows into ${tableName}`);
             }
