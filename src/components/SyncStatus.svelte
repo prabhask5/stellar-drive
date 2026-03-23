@@ -1304,6 +1304,8 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
   }
 
   /* Status dot inside the tooltip header */
@@ -1359,6 +1361,7 @@
     font-weight: 600;
     color: var(--color-text);
     letter-spacing: -0.01em;
+    flex-shrink: 0;
   }
 
   .last-sync {
@@ -1367,6 +1370,7 @@
     font-weight: 500;
     color: var(--color-text-muted);
     opacity: 0.7;
+    flex-shrink: 0;
   }
 
   /* ═══ Realtime Badge (in tooltip) ═══ */
@@ -1384,6 +1388,7 @@
     background: rgba(100, 100, 120, 0.2);
     color: var(--color-text-muted);
     transition: all 0.4s var(--ease-spring);
+    flex-shrink: 0;
   }
 
   .realtime-badge.live {

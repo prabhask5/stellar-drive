@@ -848,6 +848,25 @@ export async function getPendingEntityIds() {
  * @see {@link queueDeleteOperation} for a convenience wrapper around delete ops.
  * @see {@link coalescePendingOps} which later reduces redundant queued operations.
  */
+/**
+ * When true, suppresses per-item eager pending count updates.
+ * Used by `engineBatchWrite` to avoid N count queries + store updates
+ * during large batch operations — a single count is done at the end instead.
+ */
+let batchMode = false;
+/** Enter batch mode — suppresses per-item eager pending count updates. */
+export function enterBatchMode() {
+    batchMode = true;
+}
+/** Exit batch mode and update the pending count once. */
+export async function exitBatchMode() {
+    batchMode = false;
+    if (isDemoMode())
+        return;
+    const db = getDb();
+    const count = await db.table('syncQueue').count();
+    syncStatusStore.setPendingCount(count);
+}
 export async function queueSyncOperation(item) {
     if (isDemoMode())
         return;
@@ -861,8 +880,11 @@ export async function queueSyncOperation(item) {
     // Eagerly update pending count for instant UI feedback — the SyncStatus
     // component can immediately show the "pending" badge instead of waiting
     // until the next sync cycle completes.
-    const count = await db.table('syncQueue').count();
-    syncStatusStore.setPendingCount(count);
+    // Skipped in batch mode — the caller does a single count at the end.
+    if (!batchMode) {
+        const count = await db.table('syncQueue').count();
+        syncStatusStore.setPendingCount(count);
+    }
 }
 /**
  * Helper to queue a create operation.

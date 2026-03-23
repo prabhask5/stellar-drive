@@ -223,39 +223,10 @@ export declare function incrementRetry(id: number): Promise<void>;
  * @see {@link ./realtime.ts} which calls this during change processing
  */
 export declare function getPendingEntityIds(): Promise<Set<string>>;
-/**
- * Queue a sync operation using the intent-based format.
- *
- * This is the low-level enqueue function. It stamps the operation with the
- * current ISO 8601 timestamp and initializes the retry counter to 0, then
- * inserts it into the `syncQueue` IndexedDB table.
- *
- * **Auto-generated fields:** The `id` (auto-increment primary key),
- * `timestamp` (current time), and `retries` (0) are automatically set.
- * Callers must not provide these.
- *
- * **Durability:** The operation is persisted to IndexedDB immediately. Even
- * if the browser crashes or is closed before the next sync cycle, the
- * operation will be picked up when the app restarts.
- *
- * @param item - The operation to enqueue, excluding auto-generated fields
- *               (`id`, `timestamp`, `retries`).
- *
- * @example
- * ```ts
- * await queueSyncOperation({
- *   table: 'goals',
- *   entityId: 'abc-123',
- *   operationType: 'set',
- *   field: 'title',
- *   value: 'New Title'
- * });
- * ```
- *
- * @see {@link queueCreateOperation} for a convenience wrapper around create ops.
- * @see {@link queueDeleteOperation} for a convenience wrapper around delete ops.
- * @see {@link coalescePendingOps} which later reduces redundant queued operations.
- */
+/** Enter batch mode — suppresses per-item eager pending count updates. */
+export declare function enterBatchMode(): void;
+/** Exit batch mode and update the pending count once. */
+export declare function exitBatchMode(): Promise<void>;
 export declare function queueSyncOperation(item: Omit<SyncOperationItem, 'id' | 'timestamp' | 'retries'>): Promise<void>;
 /**
  * Helper to queue a create operation.

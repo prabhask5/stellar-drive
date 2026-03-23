@@ -29,7 +29,7 @@
  */
 import { getTableMap, getTableColumns, resolveSupabaseName } from './config';
 import { getDb } from './database';
-import { queueCreateOperation, queueDeleteOperation, queueSyncOperation } from './queue';
+import { queueCreateOperation, queueDeleteOperation, queueSyncOperation, enterBatchMode, exitBatchMode } from './queue';
 import { markEntityModified, scheduleSyncPush, hasHydrated } from './engine';
 import { generateId, now } from './utils';
 import { debugError } from './debug';
@@ -252,46 +252,57 @@ export async function engineBatchWrite(operations) {
     }
     const tables = Array.from(tableNames).map((name) => db.table(name));
     const modifiedIds = [];
-    await db.transaction('rw', tables, async () => {
-        for (const op of operations) {
-            const dexieTable = getDexieTableName(op.table);
-            const supaTable = resolveSupabaseName(op.table);
-            switch (op.type) {
-                case 'create': {
-                    const entityId = op.data.id || generateId();
-                    const payload = {
-                        created_at: timestamp,
-                        updated_at: timestamp,
-                        ...op.data,
-                        id: entityId
-                    };
-                    const { id: _id, ...queuePayload } = payload;
-                    await db.table(dexieTable).add(payload);
-                    await queueCreateOperation(supaTable, entityId, queuePayload);
-                    modifiedIds.push(entityId);
-                    break;
-                }
-                case 'update': {
-                    const updateFields = { ...op.fields, updated_at: timestamp };
-                    await db.table(dexieTable).update(op.id, updateFields);
-                    await queueSyncOperation({
-                        table: supaTable,
-                        entityId: op.id,
-                        operationType: 'set',
-                        value: updateFields
-                    });
-                    modifiedIds.push(op.id);
-                    break;
-                }
-                case 'delete': {
-                    await db.table(dexieTable).update(op.id, { deleted: true, updated_at: timestamp });
-                    await queueDeleteOperation(supaTable, op.id);
-                    modifiedIds.push(op.id);
-                    break;
+    // Suppress per-item eager pending count updates during the batch.
+    // A single count is done after the transaction commits, turning
+    // N count queries + N store updates into 1 of each.
+    enterBatchMode();
+    try {
+        await db.transaction('rw', tables, async () => {
+            for (const op of operations) {
+                const dexieTable = getDexieTableName(op.table);
+                const supaTable = resolveSupabaseName(op.table);
+                switch (op.type) {
+                    case 'create': {
+                        const entityId = op.data.id || generateId();
+                        const payload = {
+                            created_at: timestamp,
+                            updated_at: timestamp,
+                            ...op.data,
+                            id: entityId
+                        };
+                        const { id: _id, ...queuePayload } = payload;
+                        await db.table(dexieTable).add(payload);
+                        await queueCreateOperation(supaTable, entityId, queuePayload);
+                        modifiedIds.push(entityId);
+                        break;
+                    }
+                    case 'update': {
+                        const updateFields = { ...op.fields, updated_at: timestamp };
+                        await db.table(dexieTable).update(op.id, updateFields);
+                        await queueSyncOperation({
+                            table: supaTable,
+                            entityId: op.id,
+                            operationType: 'set',
+                            value: updateFields
+                        });
+                        modifiedIds.push(op.id);
+                        break;
+                    }
+                    case 'delete': {
+                        await db.table(dexieTable).update(op.id, { deleted: true, updated_at: timestamp });
+                        await queueDeleteOperation(supaTable, op.id);
+                        modifiedIds.push(op.id);
+                        break;
+                    }
                 }
             }
-        }
-    });
+        });
+    }
+    finally {
+        // Single pending count update now that all items are queued.
+        // In a finally block to ensure batch mode is always exited, even on error.
+        await exitBatchMode();
+    }
     /* Batch-notify all modified entities after the transaction commits.
        A single scheduleSyncPush() call is sufficient because the push logic
        drains the entire queue, not just one entry. */

@@ -33,6 +33,17 @@ let _demoConfig = null;
 let _demoSeeded = false;
 /** The app prefix, used to namespace the localStorage demo flag. */
 let _demoPrefix = '';
+/**
+ * Snapshot of the demo mode state, captured once at engine init.
+ *
+ * After init, `isDemoMode()` returns this cached value instead of reading
+ * live from localStorage. This prevents other tabs toggling demo mode from
+ * poisoning an already-running session (which would cause the sync engine
+ * to push demo data to Supabase — catastrophic data leak).
+ *
+ * `null` means the engine hasn't initialized yet — fall back to localStorage.
+ */
+let _demoModeSnapshot = null;
 // =============================================================================
 // Public API
 // =============================================================================
@@ -44,6 +55,8 @@ let _demoPrefix = '';
  * @returns `true` if the demo mode localStorage flag is set.
  */
 export function isDemoMode() {
+    if (_demoModeSnapshot !== null)
+        return _demoModeSnapshot;
     if (typeof localStorage === 'undefined')
         return false;
     return localStorage.getItem(`${_demoPrefix}_demo_mode`) === 'true';
@@ -51,9 +64,10 @@ export function isDemoMode() {
 /**
  * Activate or deactivate demo mode.
  *
- * Sets a localStorage flag that is read during engine initialization.
- * **The caller must trigger a full page reload** after calling this
- * to ensure the engine reinitializes with the correct (demo or real) database.
+ * Sets a localStorage flag that is read during engine initialization,
+ * then broadcasts the change to all other tabs so they force-reload
+ * into the correct mode. **The caller must trigger a full page reload**
+ * after calling this to reinitialize the current tab's engine.
  *
  * @param enabled - `true` to enter demo mode, `false` to exit.
  *
@@ -71,6 +85,13 @@ export function setDemoMode(enabled) {
     }
     else {
         localStorage.removeItem(`${_demoPrefix}_demo_mode`);
+    }
+    // Broadcast to all other tabs so they reload into the correct mode.
+    // This prevents demo data from leaking into production tabs (or vice versa).
+    if (typeof BroadcastChannel !== 'undefined') {
+        const channel = new BroadcastChannel(`${_demoPrefix}-demo-mode`);
+        channel.postMessage({ type: 'DEMO_MODE_CHANGED', enabled });
+        channel.close();
     }
 }
 /**
@@ -102,6 +123,23 @@ export function getDemoConfig() {
  */
 export function _setDemoPrefix(prefix) {
     _demoPrefix = prefix;
+    // Snapshot the demo mode state at init time so it's locked for this session.
+    if (typeof localStorage !== 'undefined') {
+        _demoModeSnapshot = localStorage.getItem(`${prefix}_demo_mode`) === 'true';
+    }
+    else {
+        _demoModeSnapshot = false;
+    }
+    // Listen for demo mode changes from other tabs and force-reload.
+    // This ensures all tabs reinitialize with the correct database immediately.
+    if (typeof BroadcastChannel !== 'undefined') {
+        const channel = new BroadcastChannel(`${prefix}-demo-mode`);
+        channel.onmessage = (event) => {
+            if (event.data?.type === 'DEMO_MODE_CHANGED') {
+                window.location.reload();
+            }
+        };
+    }
 }
 /**
  * Seed the demo database with mock data.

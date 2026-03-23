@@ -2029,10 +2029,12 @@ export async function runFullSync(quiet = false, skipPull = false) {
         // Store egress for logging
         cycleEgressBytes = pullEgress.bytes;
         cycleEgressRecords = pullEgress.records;
-        // Update status only for non-quiet syncs
+        // Always update pending count so the UI badge stays accurate.
+        // Background (quiet) syncs can clear items, and the count must reflect that.
+        const remaining = await getPendingSync();
+        syncStatusStore.setPendingCount(remaining.length);
+        // Update detailed status only for non-quiet syncs
         if (!quiet) {
-            const remaining = await getPendingSync();
-            syncStatusStore.setPendingCount(remaining.length);
             // Only show error status if:
             // 1. We have push errors that were deemed serious enough to show, OR
             // 2. Remaining items have been retrying for a while (retries >= 2)

@@ -678,6 +678,8 @@ Executes multiple write operations in a single atomic Dexie transaction. This is
 
 All operations share a single `updated_at` timestamp for consistency. Transaction scope is dynamically computed: only the Dexie tables referenced by the operations (plus `syncQueue`) are locked, minimizing contention. After the transaction commits, all modified entity IDs are marked as modified in a single pass, and a single sync push is scheduled.
 
+**Batch mode optimization:** During the transaction, the sync queue enters batch mode — per-item pending count updates are suppressed. A single `setPendingCount()` call fires after the transaction commits, avoiding O(N) IndexedDB count queries for large batches (e.g., 200 category propagation writes).
+
 **Signature:**
 ```ts
 function engineBatchWrite(operations: BatchOperation[]): Promise<void>
@@ -3659,14 +3661,16 @@ A completely isolated sandbox mode for consumer apps. When active, the engine us
 
 #### `isDemoMode()`
 
-Checks whether demo mode is currently active. Reads a localStorage flag (`${prefix}_demo_mode`) that is set by `setDemoMode()`. SSR-safe — returns `false` on the server (no `localStorage` access). When demo mode is active, the engine uses a separate Dexie database (`${name}_demo`), makes zero Supabase connections, and skips all sync/auth/email/device-verification flows.
+Checks whether demo mode is currently active. SSR-safe — returns `false` on the server (no `localStorage` access). When demo mode is active, the engine uses a separate Dexie database (`${name}_demo`), makes zero Supabase connections, and skips all sync/auth/email/device-verification flows.
+
+**Snapshot behavior:** After `initEngine()` runs, the demo mode state is snapshotted and locked for the lifetime of the page. Subsequent calls to `isDemoMode()` return the cached value — they do **not** re-read `localStorage`. This prevents a catastrophic cross-tab data leak where another tab toggling demo mode could cause the sync engine to push demo data to Supabase.
 
 **Signature:**
 ```ts
 function isDemoMode(): boolean
 ```
 
-**Returns:** `boolean` — `true` if the demo mode localStorage flag is set.
+**Returns:** `boolean` — `true` if demo mode was active when the engine initialized (or if the localStorage flag is set before engine init).
 
 **Example:**
 ```ts
@@ -3681,7 +3685,7 @@ if (isDemoMode()) {
 
 #### `setDemoMode(enabled)`
 
-Activates or deactivates demo mode by setting a localStorage flag. The flag is read during engine initialization (`initEngine()`). **The caller must trigger a full page reload** after calling this — the entire data layer (database, sync engine, auth) must be reinitialized with the correct (demo or real) database. SSR-safe — no-op on the server.
+Activates or deactivates demo mode by setting a localStorage flag and broadcasting the change to all other tabs via `BroadcastChannel`. Other tabs that have already initialized their engine will **force-reload** when they receive the broadcast, ensuring they reinitialize with the correct database. **The caller must trigger a full page reload** on the current tab after calling this. SSR-safe — no-op on the server.
 
 **Signature:**
 ```ts

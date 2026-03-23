@@ -612,10 +612,13 @@ acquireSyncLock()  ------> Lock held? Check stale (>60s) -> force release or ski
                |
                v
          releaseSyncLock()
+         updatePendingCount()  --> Always updates, even for quiet (background) syncs
          notifySyncComplete()  --> All registered stores re-read from local DB
          cleanupFailedItems()
          cleanupConflictHistory()
 ```
+
+**Pending count accuracy:** The pending count update runs unconditionally after the sync cycle — both foreground and background (quiet) syncs update the count. Without this, background syncs that clear the queue would leave a stale badge count in the UI.
 
 ### 6.4 Push Phase Details
 
@@ -1458,6 +1461,8 @@ interface SyncState {
 
 **Offline Cold Start:** When `startSyncEngine()` detects the device is offline at startup, it immediately sets status to `'offline'` with a user-friendly message. Without this, `syncStatusStore.reset()` would leave the status as `'idle'`, and the sync indicator would not show the offline state until the first online→offline transition.
 
+**Batch Mode:** `engineBatchWrite()` enters batch mode before its transaction and exits after. In batch mode, individual `queueSyncOperation()` calls suppress per-item `setPendingCount()` updates. A single count update fires on `exitBatchMode()`. This avoids O(N) IndexedDB count queries for large batch writes (e.g., 200 propagation updates).
+
 Setter methods: `setStatus()`, `setPendingCount()`, `setError()`, `setRealtimeState()`, `setSyncMessage()`, `addSyncError()`.
 
 ### 11.3 Remote Changes Store (`remoteChanges.ts`)
@@ -1603,7 +1608,17 @@ All sync/queue/realtime entry points guard against demo mode:
 - `queueSyncOperation()`, `queueCreateOperation()`, `queueDeleteOperation()` -- return early
 - `startRealtimeSubscriptions()` -- return early
 
-### 13.4 Data Flow
+### 13.4 Cross-Tab Safety
+
+Demo mode uses a two-part mechanism to prevent cross-tab data contamination:
+
+1. **Snapshot at init:** `_setDemoPrefix()` (called by `initEngine()`) captures the current localStorage demo flag into a module-level variable. After init, `isDemoMode()` returns this cached snapshot -- it never re-reads localStorage. This prevents another tab's demo mode toggle from poisoning an already-running session (which would cause the sync engine to push demo data to Supabase).
+
+2. **BroadcastChannel force-reload:** `setDemoMode()` broadcasts a `DEMO_MODE_CHANGED` message to all other tabs. `_setDemoPrefix()` registers a `BroadcastChannel` listener that calls `window.location.reload()` on receipt, forcing a full engine teardown and reinitialization with the correct database.
+
+Without the snapshot, a tab running in production mode could see `isDemoMode() === true` on its next client navigation (because localStorage is shared), causing `seedDemoData()` to run against the **production** Dexie database -- wiping real data and replacing it with mock data.
+
+### 13.5 Data Flow
 
 ```
 User -> setDemoMode(true) + page reload
@@ -1612,14 +1627,20 @@ User -> setDemoMode(true) + page reload
   -> seedDemoData() -> consumer's seedData(db) populates mock data
   -> CRUD reads/writes go to demo DB (local only)
   -> Sync/queue/realtime guards prevent any server traffic
+
+Cross-tab:
+  setDemoMode(true) -> BroadcastChannel -> other tabs receive DEMO_MODE_CHANGED
+    -> window.location.reload() -> initEngine() reads fresh localStorage
+    -> engine reinitializes with demo (or real) database
 ```
 
-### 13.5 Security Model
+### 13.6 Security Model
 
 - Demo mode does NOT bypass auth -- it replaces the entire data layer
 - If someone manually sets the localStorage flag, they see an empty/seeded demo DB
 - No path to real user data exists (different database, no Supabase client with real credentials)
 - Full page reload required to enter/exit
+- `isDemoMode()` is snapshotted at init -- localStorage mutations by other tabs cannot change the running engine's mode
 
 ---
 

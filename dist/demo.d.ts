@@ -66,9 +66,10 @@ export declare function isDemoMode(): boolean;
 /**
  * Activate or deactivate demo mode.
  *
- * Sets a localStorage flag that is read during engine initialization.
- * **The caller must trigger a full page reload** after calling this
- * to ensure the engine reinitializes with the correct (demo or real) database.
+ * Sets a localStorage flag that is read during engine initialization,
+ * then broadcasts the change to all other tabs so they force-reload
+ * into the correct mode. **The caller must trigger a full page reload**
+ * after calling this to reinitialize the current tab's engine.
  *
  * @param enabled - `true` to enter demo mode, `false` to exit.
  *
