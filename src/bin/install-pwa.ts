@@ -1968,6 +1968,23 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
   // =============================================================================
 
   /**
+   * Public/auth pages that should hide the authenticated app shell.
+   * Keep this separate from nav-route preloading.
+   */
+  const isOnLoginPage = $derived($page.url.pathname.startsWith('/login'));
+  const isOnSetupPage = $derived($page.url.pathname.startsWith('/setup'));
+  const isOnDemoPage = $derived($page.url.pathname === '/demo');
+  const isOnPolicyPage = $derived($page.url.pathname.startsWith('/policy'));
+  const isOnConfirmPage = $derived($page.url.pathname.startsWith('/confirm'));
+  const isSetupNoAuth = $derived(isOnSetupPage && data.authMode === 'none');
+  const isAuthPage = $derived(
+    isOnLoginPage || isSetupNoAuth || isOnDemoPage || isOnPolicyPage || isOnConfirmPage
+  );
+  const isAuthenticated = $derived(
+    data.authMode !== 'none' && !isAuthPage && !$authState.isLoading
+  );
+
+  /**
    * Nav routes whose rendering depends on collection stores being loaded.
    * Add your app's nav route prefixes here.
    */
@@ -2011,7 +2028,8 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
   </div>
 {/if}
 
-<!-- TODO: Add your app shell template (navbar, tab bar, page transitions, etc.) -->
+<!-- TODO: Add your app shell template (navbar, tab bar, page transitions, etc.)
+     Gate shell chrome with \`isAuthenticated\`, not \`isNavPage\`. -->
 {@render children?.()}
 <DemoBanner />
 `;
@@ -4592,19 +4610,39 @@ function generateCatchallPage(): string {
   return `/**
  * Catch-All Route Handler — \`[...catchall]/+page.ts\`
  *
- * Matches any URL that doesn't correspond to a defined route and
- * redirects the user back to the home page. Prevents 404 errors
- * for deep links that no longer exist.
+ * Unknown URLs should still end up at \`/\`, but a soft client-side redirect
+ * after hydration can leave the shell in an inconsistent state. On first
+ * document request we let the server issue a normal redirect; on client-side
+ * catch-all entry the paired page component performs a hard browser redirect.
  */
 
+import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 
-/**
- * Redirect unknown paths to the app root.
- */
 export function load() {
-  redirect(302, '/');
+  if (!browser) {
+    redirect(302, '/');
+  }
+
+  return {};
 }
+`;
+}
+
+/**
+ * Generate the catch-all page component that performs a hard browser redirect
+ * when an invalid route is reached through the client router.
+ *
+ * @returns The Svelte source for `src/routes/[...catchall]/+page.svelte`.
+ */
+function generateCatchallPageSvelte(): string {
+  return `<script lang="ts">
+  import { onMount } from 'svelte';
+
+  onMount(() => {
+    window.location.replace('/');
+  });
+</script>
 `;
 }
 
@@ -6267,6 +6305,7 @@ export async function run(): Promise<void> {
         ['src/routes/api/setup/deploy/+server.ts', generateDeployServer(opts)],
         ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
         ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
+        ['src/routes/[...catchall]/+page.svelte', generateCatchallPageSvelte()],
         ['src/routes/profile/+page.svelte', generateProfilePage(opts)],
         ['src/routes/demo/+page.svelte', generateDemoPage(opts)]
       ]
