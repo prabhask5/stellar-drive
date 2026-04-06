@@ -291,26 +291,31 @@ function isStaticAsset(pathname: string): boolean {
  * Handles HTML navigation requests with a **network-first** strategy.
  *
  * **Flow:**
- *   1. Attempt a network fetch with a 3-second timeout (abort via `AbortController`)
- *   2. If successful --> cache the response as `/` and return it
- *   3. If failed --> serve the cached root HTML for offline use
- *   4. If nothing cached --> return a minimal offline fallback page
+ *   1. Attempt a network fetch with a 1.5-second timeout (abort via `AbortController`)
+ *   2. If successful → cache the response **by pathname** and return it
+ *   3. If failed → serve cached HTML with a fallback chain:
+ *      exact pathname → `/` (SPA shell, always cached at install) →
+ *      `/offline.html` (precached) → inline fallback
+ *   4. If nothing cached → return a minimal offline fallback page
  *
- * The 3-second timeout prevents the user from staring at a blank screen
- * on flaky connections while still preferring fresh content.
+ * Caching by pathname means each route gets its own cached HTML, so offline
+ * fallbacks serve the correct SSR content instead of whichever route was last
+ * visited. The `/` entry (cached at install) acts as a universal SPA shell
+ * fallback — SvelteKit's client router renders the correct route client-side.
  *
  * @param request - The navigation `Request` object.
  * @returns A `Response` (from network, cache, or inline fallback).
  */
 async function handleNavigationRequest(request: Request): Promise<Response> {
   const cache = await caches.open(SHELL_CACHE);
+  const url = new URL(request.url);
 
   /* Offline fast path: skip the network entirely when we know we're offline.
      This eliminates the 3-second timeout delay on iOS PWA in airplane mode,
      where fetch() hangs instead of rejecting promptly. */
   if (!self.navigator.onLine) {
     console.log('[SW] Navigation offline (fast path), serving cache');
-    const cached = await cache.match('/');
+    const cached = (await cache.match(url.pathname)) ?? (await cache.match('/'));
     if (cached) return cached;
 
     const offlinePage = await cache.match('/offline.html');
@@ -333,8 +338,8 @@ async function handleNavigationRequest(request: Request): Promise<Response> {
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      /* Cache the fresh HTML for offline fallback */
-      cache.put('/', response.clone());
+      /* Cache the fresh HTML for offline fallback (keyed by pathname) */
+      cache.put(url.pathname, response.clone());
       return response;
     }
     throw new Error('Network response not ok');
@@ -371,7 +376,7 @@ async function handleNavigationRequest(request: Request): Promise<Response> {
     }
     notifyClients({ type: 'NETWORK_UNREACHABLE' });
 
-    const cached = await cache.match('/');
+    const cached = (await cache.match(url.pathname)) ?? (await cache.match('/'));
     if (cached) return cached;
 
     /* Try custom offline page (projects can create static/offline.html) */

@@ -934,6 +934,16 @@ async function forceFullSync() {
     }
     finally {
         releaseSyncLock();
+        // Push any pending queue items that survived the clear (kept intentionally)
+        try {
+            const remaining = await getPendingSync();
+            if (remaining.length > 0) {
+                scheduleSyncPush();
+            }
+        }
+        catch {
+            // Non-fatal
+        }
     }
 }
 /**
@@ -2096,8 +2106,13 @@ export async function runFullSync(quiet = false, skipPull = false) {
     }
     // Atomically acquire sync lock to prevent concurrent syncs
     const acquired = await acquireSyncLock();
-    if (!acquired)
+    if (!acquired) {
+        // Re-schedule so pending items queued during the current sync aren't orphaned.
+        // The debounce timer ensures this doesn't busy-loop — once the running sync
+        // finishes and releases the lock, the re-scheduled push will acquire it.
+        scheduleSyncPush();
         return;
+    }
     const config = getEngineConfig();
     // Track sync cycle for egress monitoring
     const cycleStart = Date.now();
@@ -2257,6 +2272,21 @@ export async function runFullSync(quiet = false, skipPull = false) {
             durationMs: Date.now() - cycleStart
         });
         releaseSyncLock();
+        // CRITICAL: If items were added to the queue DURING this sync cycle (e.g. Teller
+        // sync writing transactions while a push was in flight), they were intentionally
+        // excluded from this cycle's snapshot. Schedule a follow-up push so they don't
+        // sit orphaned in "Changes Pending" until the user manually clicks or the 15-min
+        // periodic sync fires. The debounce timer coalesces rapid completions.
+        try {
+            const postSyncRemaining = await getPendingSync();
+            if (postSyncRemaining.length > 0) {
+                debugLog(`[SYNC] ${postSyncRemaining.length} item(s) remain after sync — scheduling follow-up push`);
+                scheduleSyncPush();
+            }
+        }
+        catch {
+            // Non-fatal — worst case items wait for next periodic sync
+        }
     }
 }
 /**

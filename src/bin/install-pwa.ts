@@ -1762,6 +1762,33 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
   /** Stored reference to the chunk error handler so we can remove it on destroy. */
   let chunkErrorHandler: ((event: PromiseRejectionEvent) => void) | null = null;
 
+  /* ── Data Bootstrap ── */
+  /** Flips to \`true\` once all collection stores are loaded from IndexedDB. */
+  let dataReady = $state(false);
+
+  // =============================================================================
+  //  App Bootstrap
+  // =============================================================================
+
+  /**
+   * Preloads all collection stores from IndexedDB in parallel.
+   * Returns a cached promise so subsequent calls are no-ops.
+   *
+   * Add your app's collection stores to the Promise.all array below.
+   */
+  let initPromise: Promise<void> | null = null;
+  function initializeApp(): Promise<void> {
+    if (initPromise) return initPromise;
+    initPromise = Promise.all([
+      // Add your collection store .load() calls here, e.g.:
+      // itemsStore.load(),
+      // categoriesStore.load(),
+    ]).then(() => {
+      debug('log', '[INIT] Stores loaded from IndexedDB — page ready');
+    });
+    return initPromise;
+  }
+
   // =============================================================================
   //  Reactive Effects
   // =============================================================================
@@ -1777,6 +1804,18 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
    */
   $effect(() => {
     hydrateAuthState(data);
+  });
+
+  /**
+   * Effect: once authenticated, preload all collection stores from IndexedDB
+   * so nav pages render with data immediately (no per-page loading spinners).
+   */
+  $effect(() => {
+    if (data.authMode !== 'none') {
+      initializeApp().then(() => {
+        dataReady = true;
+      });
+    }
   });
 
   // =============================================================================
@@ -1797,7 +1836,7 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
         error?.name === 'ChunkLoadError' ||
         (error?.message?.includes('Loading chunk') && error?.message?.includes('failed'));
 
-      if (isChunkError && !navigator.onLine) {
+      if (isChunkError) {
         event.preventDefault(); // Prevent default error handling
         // Show offline navigation toast
         toastMessage = "This page isn't available offline. Please reconnect or go back.";
@@ -1924,6 +1963,26 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
     window.location.href = '/login';
   }
 
+  // =============================================================================
+  //  Derived State
+  // =============================================================================
+
+  /**
+   * Nav routes whose rendering depends on collection stores being loaded.
+   * Add your app's nav route prefixes here.
+   */
+  const NAV_ROUTES = ['/'];
+  const isNavPage = $derived(
+    NAV_ROUTES.some((r) =>
+      r === '/' ? $page.url.pathname === '/' : $page.url.pathname.startsWith(r)
+    )
+  );
+
+  /** Show the loading overlay while auth resolves OR while stores load for nav pages. */
+  const showLoader = $derived(
+    $authState.isLoading || (data.authMode !== 'none' && isNavPage && !dataReady)
+  );
+
   /**
    * Checks whether a given route \`href\` matches the current page path.
    * Used to highlight the active nav item.
@@ -1943,9 +2002,9 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
   }
 </script>
 
-<!-- Auth Loading Overlay — covers the screen until auth state resolves.
-     Prevents flicker of protected page content during redirects to /login. -->
-{#if $authState.isLoading}
+<!-- Loading Overlay — covers the screen until auth resolves and stores are loaded.
+     Prevents flicker of protected page content and empty-state flashes. -->
+{#if showLoader}
   <div style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--color-bg, #0a0a0a);">
     <!-- TODO: Replace with your app's loading animation -->
     <span>Loading...</span>
