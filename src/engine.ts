@@ -264,7 +264,10 @@ function getTombstoneMaxAgeDays(): number {
 
 /** Minimum time tab must be hidden before triggering a sync on return. Default: 5min */
 function getVisibilitySyncMinAwayMs(): number {
-  return getEngineConfig().visibilitySyncMinAwayMs ?? 300000;
+  // 15 min default. No data loss: local writes always push immediately, and realtime
+  // (restarted on tab visible by Phase 1) delivers remote changes in real-time.
+  // This threshold only controls when a *poll* runs as backup on return.
+  return getEngineConfig().visibilitySyncMinAwayMs ?? 900000;
 }
 
 /** Cooldown after a successful sync before allowing reconnect-triggered sync. Default: 2min */
@@ -552,6 +555,24 @@ let visibilityDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 /** When the tab became hidden (null if currently visible) — used to calculate away duration */
 let tabHiddenAt: number | null = null;
 
+/** Timer for tearing down realtime after tab is hidden for 15s */
+let realtimeTeardownTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Delay before tearing down realtime when tab is hidden.
+ * 15s prevents thrashing on quick tab switches (checking a notification and
+ * returning often takes 8-12s). After this delay, the WebSocket channel is
+ * fully closed — eliminating heartbeat egress (~21 pings/min) while hidden.
+ * Remote changes are caught by the visibility sync poll on return.
+ */
+const REALTIME_TEARDOWN_DELAY_MS = 15_000;
+
+/** Whether realtime was torn down while tab was hidden (needs restart on return) */
+let realtimeWasTornDown = false;
+
+/** When realtime was last (re)started — used for reconnect grace period in periodic sync */
+let lastRealtimeStartAt = 0;
+
 /** Debounce delay for visibility-change syncs (prevents rapid tab-switching spam) */
 const VISIBILITY_SYNC_DEBOUNCE_MS = 1000;
 
@@ -674,8 +695,13 @@ let lockResolve: (() => void) | null = null;
 /** Timestamp when the lock was acquired (for stale-lock detection) */
 let lockAcquiredAt: number | null = null;
 
-/** Maximum time a sync lock can be held before force-release (60 seconds) */
-const SYNC_LOCK_TIMEOUT_MS = 60_000;
+/**
+ * Maximum time a sync lock can be held before force-release.
+ * 6 minutes — exceeds the max operation timeout (5 min push/pull) by 1 min
+ * headroom, preventing the watchdog from killing legitimate large batch
+ * operations (e.g. 10,000+ row push = 20 batch upserts of 500).
+ */
+const SYNC_LOCK_TIMEOUT_MS = 360_000;
 
 // --- Event listener references (stored for cleanup in stopSyncEngine) ---
 let handleOnlineRef: (() => void) | null = null;
@@ -1157,13 +1183,20 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
     let hasMore = true;
 
     while (hasMore) {
-      const { data, error } = await supabase
-        .from(table.supabaseName)
-        .select(table.columns)
-        .gt('updated_at', lastSync)
-        .order('updated_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(offset, offset + PULL_PAGE_SIZE - 1);
+      const { data, error } = (await withTimeout(
+        Promise.resolve(
+          supabase
+            .from(table.supabaseName)
+            .select(table.columns)
+            .gt('updated_at', lastSync)
+            .order('updated_at', { ascending: true })
+            .order('id', { ascending: true })
+            .range(offset, offset + PULL_PAGE_SIZE - 1)
+        ),
+        30_000,
+        `Pull ${table.supabaseName} page at offset ${offset}`
+      )) as { data: Record<string, unknown>[] | null; error: unknown };
+      debugLog(`[SYNC] Pulled ${table.supabaseName} offset=${offset} rows=${data?.length ?? 0}`);
 
       if (error) return { data: allData, error };
       if (!data) break;
@@ -1176,12 +1209,10 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
     return { data: allData, error: null };
   }
 
-  // Wrapped in timeout to prevent hanging if Supabase doesn't respond
-  const results = await withTimeout(
-    Promise.all(config.tables.map(pullTablePaginated)),
-    30_000,
-    'Pull remote changes'
-  );
+  // No global timeout here — outer timeout in runFullSync wraps the entire pull.
+  // Per-page timeouts (below) catch individual hung requests without killing
+  // large pulls (10,000+ rows = many sequential pages).
+  const results = await Promise.all(config.tables.map(pullTablePaginated));
 
   // Check for errors
   for (let i = 0; i < results.length; i++) {
@@ -2472,11 +2503,9 @@ export async function runFullSync(
         try {
           // Don't pass postPushCursor - we want ALL changes since stored cursor
           // The conflict resolution handles our own pushed changes via device_id check
-          pullEgress = await withTimeout(
-            pullRemoteChanges(),
-            getSyncOperationTimeout(preflightItems.length),
-            'Pull remote changes'
-          );
+          // Fixed 5-min timeout for pulls — pulls can be very large (initial hydration,
+          // force sync, 20,000+ rows) and should not be capped by push-count heuristics.
+          pullEgress = await withTimeout(pullRemoteChanges(), 300_000, 'Pull remote changes');
           pullSucceeded = true;
         } catch (pullError) {
           lastPullError = pullError;
@@ -3297,9 +3326,10 @@ export async function startSyncEngine(): Promise<void> {
   isOnline.init();
 
   // Subscribe to auth state changes.
-  // CRITICAL for iOS PWA: Safari aggressively kills background tabs, which can expire
-  // the Supabase session. When the user returns, TOKEN_REFRESHED fires and we need
-  // to restart realtime + trigger a sync to catch up on missed changes.
+  // SIGNED_IN: user just logged in — full sync + realtime restart needed.
+  // TOKEN_REFRESHED: routine refresh (~every 55 min) — only restart realtime if
+  // unhealthy. No sync needed: the Supabase JS client handles token rotation
+  // automatically, and the visibility handler catches missed changes on tab return.
   authStateUnsubscribe = supabase.auth.onAuthStateChange(async (event, session) => {
     debugLog(`[SYNC] Auth state change: ${event}`);
 
@@ -3309,18 +3339,27 @@ export async function startSyncEngine(): Promise<void> {
       stopRealtimeSubscriptions();
       syncStatusStore.setStatus('error');
       syncStatusStore.setError('Signed out', 'Please sign in to sync your data.');
-    } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-      // User signed in or token refreshed - restart sync
-      debugLog('[SYNC] Auth restored - resuming sync');
+    } else if (event === 'SIGNED_IN') {
+      // User just logged in — restart realtime + full sync to hydrate
+      debugLog('[SYNC] Signed in — resuming sync');
       if (navigator.onLine) {
-        // Clear any auth errors
         syncStatusStore.reset();
-        // Restart realtime
         if (session?.user?.id) {
           startRealtimeSubscriptions(session.user.id);
+          lastRealtimeStartAt = Date.now();
         }
-        // Run a sync to push any pending changes
         runFullSync(false).catch((e) => debugError('[SYNC] Auth-triggered sync failed:', e));
+      }
+    } else if (event === 'TOKEN_REFRESHED') {
+      // Routine token refresh (~every 55 min). The Supabase JS client automatically
+      // uses the new token for subsequent requests — no sync needed.
+      // Only restart realtime if it's currently unhealthy (e.g. WebSocket dropped).
+      const realtimeHealthy = isRealtimeHealthy();
+      debugLog(`[SYNC] Token refreshed — realtime healthy: ${realtimeHealthy}, skipping sync`);
+      if (navigator.onLine && !realtimeHealthy && session?.user?.id) {
+        debugLog('[SYNC] Restarting unhealthy realtime after token refresh');
+        startRealtimeSubscriptions(session.user.id);
+        lastRealtimeStartAt = Date.now();
       }
     }
 
@@ -3471,6 +3510,7 @@ export async function startSyncEngine(): Promise<void> {
     const userId = await getCurrentUserId();
     if (userId) {
       startRealtimeSubscriptions(userId);
+      lastRealtimeStartAt = Date.now();
     }
   };
   window.addEventListener('online', handleOnlineRef);
@@ -3491,16 +3531,48 @@ export async function startSyncEngine(): Promise<void> {
     isTabVisible = !document.hidden;
     syncStatusStore.setTabVisible(isTabVisible);
 
-    // Track when tab becomes hidden
+    // Tab becoming hidden → schedule realtime teardown after delay
     if (!isTabVisible) {
       tabHiddenAt = Date.now();
+
+      // Schedule realtime teardown to eliminate background heartbeat egress.
+      // The 15s delay avoids thrashing on quick tab switches (e.g. checking
+      // a notification and returning takes 8-12s).
+      if (!realtimeTeardownTimer) {
+        realtimeTeardownTimer = setTimeout(() => {
+          realtimeTeardownTimer = null;
+          realtimeWasTornDown = true;
+          stopRealtimeSubscriptions();
+          debugLog('[SYNC] Realtime torn down — tab hidden for 15s+');
+        }, REALTIME_TEARDOWN_DELAY_MS);
+        debugLog('[SYNC] Realtime teardown scheduled in 15s');
+      }
       return;
     }
 
-    // If tab just became visible, check if we should sync
-    if (wasHidden && isTabVisible && navigator.onLine) {
-      // Only sync if user was away for > configured minutes AND realtime is not healthy
-      // If realtime is connected, we're already up-to-date
+    // Tab becoming visible
+    if (wasHidden && isTabVisible) {
+      // Cancel teardown timer if it hasn't fired yet (quick tab switch)
+      if (realtimeTeardownTimer) {
+        clearTimeout(realtimeTeardownTimer);
+        realtimeTeardownTimer = null;
+        debugLog('[SYNC] Realtime teardown cancelled — tab visible before 15s');
+      }
+
+      // Restart realtime if it was torn down while hidden
+      if (realtimeWasTornDown && navigator.onLine) {
+        realtimeWasTornDown = false;
+        getCurrentUserId().then((userId) => {
+          if (userId) {
+            startRealtimeSubscriptions(userId);
+            lastRealtimeStartAt = Date.now();
+            debugLog('[SYNC] Restarting realtime — tab visible after teardown');
+          }
+        });
+      }
+
+      if (!navigator.onLine) return;
+
       const awayDuration = tabHiddenAt ? Date.now() - tabHiddenAt : 0;
       tabHiddenAt = null;
 
@@ -3511,11 +3583,8 @@ export async function startSyncEngine(): Promise<void> {
         return;
       }
 
-      // Skip sync if realtime is healthy (we're already up-to-date)
-      if (isRealtimeHealthy()) {
-        debugLog('[SYNC] Visibility sync skipped: realtime is healthy');
-        return;
-      }
+      // Don't skip on isRealtimeHealthy() — we may have just torn down realtime,
+      // so it won't be healthy yet. The poll catches changes missed while hidden.
 
       // Clear any pending visibility sync
       if (visibilityDebounceTimeout) {
@@ -3524,7 +3593,7 @@ export async function startSyncEngine(): Promise<void> {
       // Debounce to prevent rapid syncs when user quickly switches tabs
       visibilityDebounceTimeout = setTimeout(() => {
         visibilityDebounceTimeout = null;
-        runFullSync(true).catch((e) => debugError('[SYNC] Visibility sync failed:', e)); // Quiet - no error shown if it fails
+        runFullSync(true).catch((e) => debugError('[SYNC] Visibility sync failed:', e));
       }, VISIBILITY_SYNC_DEBOUNCE_MS);
     }
   };
@@ -3557,6 +3626,7 @@ export async function startSyncEngine(): Promise<void> {
 
     // Start realtime subscriptions
     startRealtimeSubscriptions(userId);
+    lastRealtimeStartAt = Date.now();
   }
 
   // Start the periodic background sync timer.
@@ -3569,7 +3639,16 @@ export async function startSyncEngine(): Promise<void> {
     // This egress optimization is critical — without it, every open tab polls
     // the entire database every 15 minutes regardless of realtime status.
     if (navigator.onLine && isTabVisible && !isRealtimeHealthy()) {
-      runFullSync(true).catch((e) => debugError('[SYNC] Periodic sync failed:', e)); // Quiet background sync
+      // Grace period: if realtime was just (re)started, give it up to 60s to
+      // establish the WebSocket connection before falling back to polling.
+      const sinceRealtimeStart = Date.now() - lastRealtimeStartAt;
+      if (lastRealtimeStartAt > 0 && sinceRealtimeStart < 60_000) {
+        debugLog(
+          `[SYNC] Skipping periodic poll — realtime reconnecting (${Math.round(sinceRealtimeStart / 1000)}s ago)`
+        );
+      } else {
+        runFullSync(true).catch((e) => debugError('[SYNC] Periodic sync failed:', e));
+      }
     }
 
     // Cleanup old tombstones, conflict history, failed sync items, and recently modified cache
@@ -3741,6 +3820,10 @@ export async function stopSyncEngine(): Promise<void> {
   if (visibilityDebounceTimeout) {
     clearTimeout(visibilityDebounceTimeout);
     visibilityDebounceTimeout = null;
+  }
+  if (realtimeTeardownTimer) {
+    clearTimeout(realtimeTeardownTimer);
+    realtimeTeardownTimer = null;
   }
   releaseSyncLock();
   _hasHydrated = false;

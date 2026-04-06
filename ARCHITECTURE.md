@@ -700,7 +700,7 @@ The engine aggressively minimizes Supabase bandwidth consumption. This matters b
 | **Operation coalescing** | Largest reduction | 50 rapid writes become 1 request. Create+delete = 0 requests. |
 | **Push-only mode** | Skips all pull queries | When realtime WebSocket is healthy, user-triggered syncs skip the pull phase. Remote changes arrive via WebSocket instead. |
 | **Cached user validation** | ~720 calls/day saved | `getUser()` is called once per hour instead of once per sync cycle. |
-| **Visibility-aware sync** | Avoids unnecessary syncs | If tab was hidden < 5 minutes (`visibilitySyncMinAwayMs = 300000`), skip sync on return. |
+| **Visibility-aware sync** | Avoids unnecessary syncs | If tab was hidden < 15 minutes (`visibilitySyncMinAwayMs = 900000`), skip sync on return. No data loss: local writes always push immediately, and realtime (restarted on tab visible) delivers remote changes in real-time. This threshold only controls when a backup *poll* runs on return. |
 | **Reconnect cooldown** | Prevents duplicate syncs | If a sync completed < 2 minutes ago (`onlineReconnectCooldownMs = 120000`), skip reconnect-triggered sync. |
 | **Selective columns** | Reduces payload size | Every query specifies explicit columns instead of `SELECT *` (when configured). |
 | **Cursor-based incremental pull** | Only fetches new data | `WHERE updated_at > cursor` instead of full table scan. |
@@ -709,6 +709,30 @@ The engine aggressively minimizes Supabase bandwidth consumption. This matters b
 | **Batch upserts** | N creates → 1 request | Create operations are grouped by table and sent as a single `upsert([...])`. Handles duplicates without fallback round-trips. |
 | **Parent-first ordering** | Prevents RLS retry storms | Child table batches wait until parent batches succeed, avoiding failed inserts that waste bandwidth on retries. |
 | **Realtime suspension during batch push** | Eliminates echo egress | When ≥50 ops are pending, the realtime channel is removed before pushing. Supabase generates no CDC events for this client during the push. Channel is re-subscribed after push completes. Any missed remote changes are caught by the pull phase. |
+| **Realtime teardown on tab hidden** | ~30-40 MB/day saved | WebSocket fully torn down after 15s hidden, eliminating background heartbeat egress (~21 pings/min). Restarted instantly on tab return. |
+| **TOKEN_REFRESHED skip** | ~5-10 MB/day saved | Routine token refresh (~every 55 min) no longer triggers full sync or realtime restart. The Supabase JS client handles token rotation automatically. Only restarts realtime if it was already unhealthy. |
+| **Reconnect grace period** | Avoids redundant polls | 60s grace period after realtime (re)start before the periodic poll falls back to polling. Prevents unnecessary full pulls while the WebSocket is still connecting. |
+
+#### Realtime Teardown Strategy
+
+When the browser tab is hidden for >15 seconds, the WebSocket channel is fully torn down to eliminate heartbeat egress (~21 pings/min). Quick tab switches (<15s, e.g. checking a notification) cancel the timer with zero overhead. On return:
+
+1. Realtime is restarted immediately (delivers remote changes in ~1-2s)
+2. A visibility sync poll runs if away >15 minutes (catches anything missed)
+3. A 60s grace period prevents the periodic poll from firing while realtime reconnects
+
+**Data safety**: Local writes always push immediately via the sync queue regardless of visibility state. Remote changes from other devices may display a few minutes late if realtime hasn't reconnected yet, but are never lost.
+
+#### Timeout Architecture for Large Batches
+
+Designed to handle 10,000-20,000+ row operations without timeouts:
+
+| Component | Timeout | Rationale |
+|-----------|---------|-----------|
+| Per-page pull | 30s/page | Catches individual hung HTTP requests without capping total pull duration |
+| Total pull (runFullSync) | 5 min fixed | Large initial hydrations, force syncs. Not based on push count heuristics. |
+| Push | 45s + 30s/500 items, max 5 min | Scales with batch size |
+| Sync lock | 6 min | Exceeds max operation (5 min) by 1 min headroom. Prevents watchdog from force-releasing during legitimate large batch operations. |
 
 ### 6.9 Egress Tracking
 
