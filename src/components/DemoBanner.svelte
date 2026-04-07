@@ -19,7 +19,7 @@
 
 {#if visible}
   <div class="demo-banner" role="status" aria-live="polite">
-    <span class="demo-banner-text">Demo Mode — Changes reset on refresh</span>
+    <span class="demo-banner-text">Demo Mode<span class="demo-banner-subtitle"> — Changes reset on refresh</span></span>
     <a class="demo-banner-link" href="/demo">Demo Page</a>
     <button
       class="demo-banner-close"
@@ -51,7 +51,7 @@
     font-size: 0.8125rem;
     font-weight: 500;
     letter-spacing: 0.01em;
-    white-space: normal;
+    white-space: nowrap;
     max-width: calc(100vw - 2rem);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     pointer-events: auto;
@@ -63,6 +63,12 @@
       padding: 0.375rem 0.75rem;
       font-size: 0.75rem;
       gap: 0.5rem;
+    }
+
+    /* Mobile: hide subtitle and Demo Page link — keep it to just "Demo Mode ×" */
+    .demo-banner-subtitle,
+    .demo-banner-link {
+      display: none;
     }
   }
 
