@@ -1808,7 +1808,7 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
 
   // Scroll to top after every navigation so the new page always starts at the top.
   afterNavigate(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    window.scrollTo(0, 0);
   });
 
   /**
