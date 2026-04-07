@@ -450,7 +450,7 @@ Import only what you need:
 | `stellar-drive/config` | Runtime config management (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
 | `stellar-drive/vite` | Vite plugin (`stellarPWA`) for service worker builds, asset manifests, and schema auto-generation |
 | `stellar-drive/kit` | SvelteKit helpers: server route factories, layout loaders, email confirmation, SW lifecycle, auth hydration |
-| `stellar-drive/components/*` | Svelte components: `SyncStatus`, `DeferredChangesBanner`, `DemoBanner` |
+| `stellar-drive/components/*` | Svelte components: `SyncStatus`, `DeferredChangesBanner`, `DemoBanner`, `DemoBlockedMessage` |
 
 ### Key categories at a glance
 

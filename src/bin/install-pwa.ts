@@ -1722,6 +1722,7 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
   import { debug } from 'stellar-drive/utils';
   import { hydrateAuthState } from 'stellar-drive/kit';
   import DemoBanner from 'stellar-drive/components/DemoBanner';
+  import DemoBlockedMessage from 'stellar-drive/components/DemoBlockedMessage';
 
   /* ── Types ── */
   import type { LayoutData } from './+layout';
@@ -2039,6 +2040,15 @@ function generateRootLayoutSvelte(opts: InstallOptions): string {
      Gate shell chrome with \`isAuthenticated\`, not \`isNavPage\`. -->
 {@render children?.()}
 <DemoBanner />
+<DemoBlockedMessage />
+
+<style>
+  /* Raise the DemoBanner above the mobile nav tab bar on small screens.
+     Apps should adjust this value to match their tab bar height (~64px). */
+  @media (max-width: 767px) {
+    :global(:root) { --demo-banner-bottom: 4.5rem; }
+  }
+</style>
 `;
 }
 
@@ -4690,6 +4700,7 @@ function generateProfilePage(opts: InstallOptions): string {
   } from 'stellar-drive';
   import type { TrustedDevice } from 'stellar-drive';
   import { getDemoConfig } from 'stellar-drive';
+  import { showDemoBlocked } from 'stellar-drive/demo';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
 
@@ -4741,17 +4752,6 @@ function generateProfilePage(opts: InstallOptions): string {
   let codeSuccess = $state<string | null>(null);
   let debugMode = $state(isDebugMode());
   let resetting = $state(false);
-
-  /* ── Demo mode toast ──── */
-  let demoToast = $state('');
-  let demoToastTimer: ReturnType<typeof setTimeout> | null = null;
-
-  /** Show a temporary toast for blocked demo operations. */
-  function showDemoToast(msg: string) {
-    demoToast = msg;
-    if (demoToastTimer) clearTimeout(demoToastTimer);
-    demoToastTimer = setTimeout(() => (demoToast = ''), 3000);
-  }
 
   /* ── Debug tools loading flags ──── */
   let forceSyncing = $state(false);
@@ -4890,7 +4890,7 @@ function generateProfilePage(opts: InstallOptions): string {
   async function handleProfileSubmit(e: Event) {
     e.preventDefault();
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     profileLoading = true;
@@ -4925,7 +4925,7 @@ function generateProfilePage(opts: InstallOptions): string {
   async function handleCodeSubmit(e: Event) {
     e.preventDefault();
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
 
@@ -4979,7 +4979,7 @@ function generateProfilePage(opts: InstallOptions): string {
   async function handleEmailSubmit(e: Event) {
     e.preventDefault();
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     emailError = null;
@@ -5089,7 +5089,7 @@ function generateProfilePage(opts: InstallOptions): string {
    */
   async function handleResetDatabase() {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     if (
@@ -5117,7 +5117,7 @@ function generateProfilePage(opts: InstallOptions): string {
    */
   async function handleRemoveDevice(id: string) {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     removingDeviceId = id;
@@ -5146,7 +5146,7 @@ function generateProfilePage(opts: InstallOptions): string {
   /** Resets the sync cursor and re-downloads all data from Supabase. */
   async function handleForceFullSync() {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     if (
@@ -5173,7 +5173,7 @@ function generateProfilePage(opts: InstallOptions): string {
   /** Manually trigger a single push/pull sync cycle. */
   async function handleTriggerSync() {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     triggeringSyncManual = true;
@@ -5194,7 +5194,7 @@ function generateProfilePage(opts: InstallOptions): string {
   /** Reset the sync cursor so the next cycle pulls all remote data. */
   async function handleResetSyncCursor() {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     resettingCursor = true;
@@ -5215,7 +5215,7 @@ function generateProfilePage(opts: InstallOptions): string {
   /** Log soft-deleted record counts per table to the browser console. */
   async function handleViewTombstones() {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     viewingTombstones = true;
@@ -5238,7 +5238,7 @@ function generateProfilePage(opts: InstallOptions): string {
   /** Permanently remove old soft-deleted records from local + remote DBs. */
   async function handleCleanupTombstones() {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     if (
@@ -5267,7 +5267,7 @@ function generateProfilePage(opts: InstallOptions): string {
   /** Dispatch a custom event that the app shell listens for to sign out on mobile. */
   function handleMobileSignOut() {
     if (inDemoMode) {
-      showDemoToast('Not available in demo mode');
+      showDemoBlocked('Not available in demo mode');
       return;
     }
     window.dispatchEvent(new CustomEvent('${opts.prefix}:signout'));

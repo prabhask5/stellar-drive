@@ -64,6 +64,10 @@
     "./components/DemoBanner": {
       "svelte": "./src/components/DemoBanner.svelte",
       "default": "./src/components/DemoBanner.svelte"
+    },
+    "./components/DemoBlockedMessage": {
+      "svelte": "./src/components/DemoBlockedMessage.svelte",
+      "default": "./src/components/DemoBlockedMessage.svelte"
     }
   },
   "bin": {

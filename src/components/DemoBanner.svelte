@@ -34,7 +34,7 @@
 <style>
   .demo-banner {
     position: fixed;
-    bottom: 1rem;
+    bottom: calc(var(--demo-banner-bottom, 1rem) + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%);
     z-index: 9000;
@@ -51,10 +51,19 @@
     font-size: 0.8125rem;
     font-weight: 500;
     letter-spacing: 0.01em;
-    white-space: nowrap;
+    white-space: normal;
+    max-width: calc(100vw - 2rem);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     pointer-events: auto;
     animation: demo-banner-slide-up 0.3s ease-out;
+  }
+
+  @media (max-width: 767px) {
+    .demo-banner {
+      padding: 0.375rem 0.75rem;
+      font-size: 0.75rem;
+      gap: 0.5rem;
+    }
   }
 
   .demo-banner-text {
@@ -87,10 +96,11 @@
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.15);
     color: rgba(255, 255, 255, 0.8);
-    font-size: 0.625rem;
+    font-size: 0.75rem;
     cursor: pointer;
     transition: background 0.15s ease;
     flex-shrink: 0;
+    line-height: 1;
   }
 
   .demo-banner-close:hover {

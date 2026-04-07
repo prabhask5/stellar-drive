@@ -4,5 +4,13 @@
  * Re-exports demo mode utilities for isolated sandbox environments.
  */
 
-export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConfig } from '../demo';
+export {
+  isDemoMode,
+  setDemoMode,
+  seedDemoData,
+  cleanupDemoDatabase,
+  getDemoConfig,
+  showDemoBlocked,
+  _demoBlockedStore
+} from '../demo';
 export type { DemoConfig } from '../demo';

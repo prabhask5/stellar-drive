@@ -1676,6 +1676,18 @@ Cross-tab:
 - Full page reload required to enter/exit
 - `isDemoMode()` is snapshotted at init -- localStorage mutations by other tabs cannot change the running engine's mode
 
+### 13.7 UI Components
+
+Two Svelte components handle demo mode UI from `stellar-drive/components/`:
+
+- **`DemoBanner`** — fixed-position bottom pill banner shown when demo mode is active. Dismissible. Respects the `--demo-banner-bottom` CSS custom property so apps can raise it above their mobile nav bar (set to `4.5rem` on mobile; defaults to `1rem`). z-index: 9000. Mount once in the root layout alongside `<DemoBlockedMessage />`.
+
+- **`DemoBlockedMessage`** — center-screen modal overlay triggered by `showDemoBlocked(message)` from `stellar-drive/demo`. Auto-dismisses after 3 seconds; clicking the backdrop dismisses immediately. Uses neutral dark glass styling that works across all app themes. z-index: 9950 (above DemoBanner, below the sign-out overlay at 9998). Mount once in the app root layout.
+
+**Pattern:** `showDemoBlocked(message)` (exported from `stellar-drive/demo`) writes to `_demoBlockedStore`, which `<DemoBlockedMessage />` reads reactively. Apps must mount `<DemoBlockedMessage />` in their root layout for any calls to `showDemoBlocked()` to render. This is the standardized replacement for all per-page ad-hoc "not available in demo mode" toast implementations.
+
+**Mobile banner positioning:** Apps set `--demo-banner-bottom: 4.5rem` in a `@media (max-width: 767px)` rule on `:root` in their root layout `<style>` block. This raises the banner above the ~64px mobile tab bar without affecting the desktop layout.
+
 ---
 
 ## 14. SQL & TypeScript Generation

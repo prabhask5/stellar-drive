@@ -23,6 +23,7 @@
  */
 
 import Dexie from 'dexie';
+import { writable } from 'svelte/store';
 import { getDb } from './database';
 import { getEngineConfig, getDexieTableFor } from './config';
 
@@ -63,6 +64,43 @@ export interface DemoConfig {
     lastName: string;
     [key: string]: unknown;
   };
+}
+
+// =============================================================================
+// Demo Blocked Message Store
+// =============================================================================
+
+/**
+ * Store that drives the DemoBlockedMessage overlay.
+ *
+ * `null` = hidden. A non-null string = the message to display.
+ *
+ * @internal — prefer `showDemoBlocked()` over writing to this store directly.
+ */
+export const _demoBlockedStore = writable<string | null>(null);
+
+/**
+ * Show a center-screen "not available in demo mode" message overlay.
+ *
+ * Requires `<DemoBlockedMessage />` to be mounted in the app root layout.
+ * The overlay auto-dismisses after 3 seconds. Tapping the backdrop dismisses
+ * it immediately.
+ *
+ * @param message - Short description of the blocked action
+ *   (e.g. `'Not available in demo mode'`).
+ *
+ * @example
+ * ```ts
+ * import { showDemoBlocked } from 'stellar-drive/demo';
+ *
+ * if (isDemoMode()) {
+ *   showDemoBlocked('Not available in demo mode');
+ *   return;
+ * }
+ * ```
+ */
+export function showDemoBlocked(message: string): void {
+  _demoBlockedStore.set(message);
 }
 
 // =============================================================================

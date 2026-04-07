@@ -3804,6 +3804,54 @@ if (config) {
 
 ---
 
+#### `showDemoBlocked(message)`
+
+Shows a center-screen "not available in demo mode" modal overlay. The overlay auto-dismisses after 3 seconds; clicking the backdrop dismisses it immediately. Requires `<DemoBlockedMessage />` to be mounted once in the app root layout — the function writes to `_demoBlockedStore` which the component reads reactively.
+
+Use this wherever an operation requires a real network connection (Supabase, external APIs) and must be blocked in demo mode. Do **not** show a regular toast for these — the overlay is the standardized pattern.
+
+**Signature:**
+```ts
+function showDemoBlocked(message: string): void
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `message` | `string` | The action-specific message to display (e.g. `'Connecting bank accounts is not available in demo mode'`). |
+
+**Returns:** `void`
+
+**Import:** `import { showDemoBlocked } from 'stellar-drive/demo';`
+
+**Example:**
+```ts
+import { showDemoBlocked } from 'stellar-drive/demo';
+
+async function connectBank() {
+  if (isDemoMode()) {
+    showDemoBlocked('Connecting bank accounts is not available in demo mode');
+    return;
+  }
+  // ... real connection logic
+}
+```
+
+---
+
+#### `_demoBlockedStore`
+
+Internal Svelte writable store that drives `<DemoBlockedMessage />`. Holds the current message string, or `null` when the overlay is hidden. Prefer `showDemoBlocked()` over writing to this store directly — the store is an implementation detail.
+
+**Type:**
+```ts
+import type { Writable } from 'svelte/store';
+const _demoBlockedStore: Writable<string | null>
+```
+
+**Import:** `import { _demoBlockedStore } from 'stellar-drive/demo';`
+
+---
+
 ## Supabase Client
 
 #### `supabase`
