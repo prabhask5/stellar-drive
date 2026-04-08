@@ -1,10 +1,11 @@
 <!--
   @fileoverview DemoBanner — fixed-position notification bar for demo mode.
 
-  Renders a subtle, dismissible banner at the bottom center of the viewport
-  when the app is running in demo mode. Informs the user that changes will
-  reset on refresh.
+  Renders a dismissible banner at the bottom of the viewport when the app is
+  running in demo mode. Informs the user that changes will reset on refresh.
 
+  - Desktop: pill-shaped, centered, original design.
+  - Mobile: full-width bar anchored to the bottom, shows all content.
   - Only renders when `isDemoMode()` returns `true`.
   - Dismissible via the close button (component-local state).
   - Glass morphism styling with backdrop-filter blur.
@@ -26,12 +27,15 @@
       onclick={() => (dismissed = true)}
       aria-label="Dismiss demo mode banner"
     >
-      ✕
+      <svg width="7" height="7" viewBox="0 0 8 8" fill="none" aria-hidden="true">
+        <path d="M1 1l6 6M7 1L1 7" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+      </svg>
     </button>
   </div>
 {/if}
 
 <style>
+  /* ── Desktop: pill, centered (original design) ── */
   .demo-banner {
     position: fixed;
     bottom: calc(var(--demo-banner-bottom, 1rem) + env(safe-area-inset-bottom, 0px));
@@ -55,25 +59,15 @@
     max-width: calc(100vw - 2rem);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     pointer-events: auto;
-    animation: demo-banner-slide-up 0.3s ease-out;
-  }
-
-  @media (max-width: 767px) {
-    .demo-banner {
-      padding: 0.375rem 0.75rem;
-      font-size: 0.75rem;
-      gap: 0.5rem;
-    }
-
-    /* Mobile: hide subtitle and Demo Page link — keep it to just "Demo Mode ×" */
-    .demo-banner-subtitle,
-    .demo-banner-link {
-      display: none;
-    }
+    animation: demo-banner-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .demo-banner-text {
     opacity: 0.95;
+  }
+
+  .demo-banner-subtitle {
+    opacity: 0.75;
   }
 
   .demo-banner-link {
@@ -102,7 +96,6 @@
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.15);
     color: rgba(255, 255, 255, 0.8);
-    font-size: 0.75rem;
     cursor: pointer;
     transition: background 0.15s ease;
     flex-shrink: 0;
@@ -110,17 +103,49 @@
   }
 
   .demo-banner-close:hover {
-    background: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.28);
+  }
+
+  /* ── Mobile: full-width bar anchored to bottom ── */
+  @media (max-width: 767px) {
+    .demo-banner {
+      left: 0;
+      right: 0;
+      bottom: calc(var(--demo-banner-bottom, 0px) + env(safe-area-inset-bottom, 0px));
+      transform: none;
+      border-radius: 0;
+      border-left: none;
+      border-right: none;
+      border-bottom: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 0.45rem 1rem;
+      font-size: 0.78rem;
+      gap: 0.6rem;
+      max-width: none;
+      white-space: normal;
+      animation: demo-banner-rise 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
   }
 
   @keyframes demo-banner-slide-up {
     from {
       opacity: 0;
-      transform: translateX(-50%) translateY(1rem);
+      transform: translateX(-50%) translateY(0.75rem);
     }
     to {
       opacity: 1;
       transform: translateX(-50%) translateY(0);
+    }
+  }
+
+  @keyframes demo-banner-rise {
+    from {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 </style>

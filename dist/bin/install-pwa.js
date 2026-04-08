@@ -1692,11 +1692,14 @@ function generateRootLayoutSvelte(opts) {
     hydrateAuthState(data);
   });
 
-  // Scroll to top after every navigation so the new page always starts at the top.
+  // Scroll to top on NEW page navigation. Skip same-pathname navigations (data
+  // revalidations, focus events) so the page doesn't jump on tab/window focus.
   // Must target document.body directly — html has overflow:hidden so window.scrollTo
   // targets document.documentElement which cannot scroll and is a guaranteed no-op.
-  afterNavigate(() => {
-    document.body.scrollTop = 0;
+  afterNavigate((nav) => {
+    if (nav.from?.url.pathname !== nav.to?.url.pathname) {
+      document.body.scrollTop = 0;
+    }
   });
 
   /**
