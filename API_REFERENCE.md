@@ -1259,7 +1259,7 @@ switch (authMode) {
 
 #### `resetLoginGuard()`
 
-Clears all login guard state: local failure counters, rate-limit attempts, the next-allowed-attempt timestamp, and the persistent IndexedDB lockout record. Call this on sign-out or app reset to ensure the next login attempt starts with a clean slate.
+Clears all login guard state: local failure counters, and the persistent IndexedDB lockout record. Call this on sign-out or app reset to ensure the next login attempt starts with a clean slate.
 
 The login guard prevents brute-force attacks by rate-limiting failed login attempts with progressive lockout tiers backed by IndexedDB. It also performs a local pre-check against the cached gate hash before calling Supabase, reducing unnecessary API requests.
 

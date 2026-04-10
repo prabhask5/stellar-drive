@@ -1357,7 +1357,7 @@ For single-user mode, the resolution determines the auth mode based on local con
 
 Minimizes Supabase auth API requests by verifying credentials locally first. This is especially useful for rate-limited Supabase auth endpoints and for providing instant feedback on incorrect PINs.
 
-**Persistent brute-force protection**: The login guard uses IndexedDB (key `'pin_lockout'` in the `singleUserConfig` table) to persist lockout state across page refreshes and browser restarts. In-memory rate limiting alone resets on page reload, allowing unlimited brute-force attempts. The persistent lockout applies progressive tiers:
+**Persistent brute-force protection**: The login guard uses IndexedDB (key `'pin_lockout'` in the `singleUserConfig` table) to persist lockout state across page refreshes and browser restarts. The persistent lockout applies progressive tiers:
 
 | Failures | Lockout Duration |
 |----------|-----------------|
