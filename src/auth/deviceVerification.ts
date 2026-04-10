@@ -494,7 +494,8 @@ export async function sendDeviceVerification(email: string): Promise<{ error: st
  * 2. User opens the OTP link on Device B (or Device A).
  * 3. This function reads `pending_{prefix}_device_id` from metadata and trusts Device A.
  * 4. Device A polls via {@link pollDeviceVerification} and discovers it's now trusted.
- * 5. Both Device A and the confirming device (B) are trusted.
+ * 5. Only Device A is trusted — the confirming device (B) is NOT added, since
+ *    the user never signed into the app on that device.
  *
  * If no `pending_{prefix}_device_id` is found in metadata (same-browser case where the
  * link was opened in the same browser), falls back to trusting the current
@@ -535,7 +536,11 @@ export async function trustPendingDevice(): Promise<void> {
     const now = new Date().toISOString();
 
     /* Trust the originating device (the one that entered the PIN) by
-       upserting its device ID into the trusted_devices table */
+       upserting its device ID into the trusted_devices table.
+       We intentionally do NOT trust the confirming device here — the device
+       opening the email link is just a messenger (e.g. Firefox on desktop
+       confirming for a mobile PWA). Only devices the user actually signs
+       into should appear as trusted. */
     const { error: upsertError } = await supabase.from('trusted_devices').upsert(
       {
         user_id: user.id,
@@ -553,10 +558,6 @@ export async function trustPendingDevice(): Promise<void> {
     } else {
       debugLog('[DeviceVerification] Pending device trusted:', pendingDeviceLabel);
     }
-
-    /* Also trust the current device (the one opening the confirmation link),
-       since the user has demonstrated control of the email on this device too */
-    await trustCurrentDevice(user.id);
 
     /* Clear pending device from metadata to prevent stale references.
        Setting to null removes the keys from user_metadata. */

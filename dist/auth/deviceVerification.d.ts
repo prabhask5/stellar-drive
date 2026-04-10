@@ -224,7 +224,8 @@ export declare function sendDeviceVerification(email: string): Promise<{
  * 2. User opens the OTP link on Device B (or Device A).
  * 3. This function reads `pending_{prefix}_device_id` from metadata and trusts Device A.
  * 4. Device A polls via {@link pollDeviceVerification} and discovers it's now trusted.
- * 5. Both Device A and the confirming device (B) are trusted.
+ * 5. Only Device A is trusted — the confirming device (B) is NOT added, since
+ *    the user never signed into the app on that device.
  *
  * If no `pending_{prefix}_device_id` is found in metadata (same-browser case where the
  * link was opened in the same browser), falls back to trusting the current

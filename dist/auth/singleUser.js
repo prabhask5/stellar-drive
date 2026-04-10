@@ -701,10 +701,19 @@ export async function completeDeviceVerification(tokenHash) {
             if (error)
                 return { error };
         }
-        /* After OTP verification, the Supabase session should be available */
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        /* After OTP verification, retrieve the current session.
+           If the cached session is stale (e.g. the signInWithOtp call during
+           sendDeviceVerification briefly disrupted it), attempt a refresh
+           before giving up — this is the most common cause of the "iPhone
+           loading forever" symptom on cross-device verification. */
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        let session = sessionData.session;
         if (sessionError || !session) {
-            return { error: 'Session not found after verification' };
+            const refreshed = await supabase.auth.refreshSession();
+            if (refreshed.error || !refreshed.data.session) {
+                return { error: 'Session not found after verification' };
+            }
+            session = refreshed.data.session;
         }
         const user = session.user;
         /* Trust the device now that verification is complete */
@@ -727,6 +736,17 @@ export async function completeDeviceVerification(tokenHash) {
             debugWarn('[SingleUser] Failed to create offline session after device verification:', e);
         }
         authState.setSupabaseAuth(session);
+        /* Clear lock flag now that device verification is complete — without
+           this, resolveAuthState() sees locked: true and redirects to /login
+           right as goto() fires, causing navigation chaos on cross-device flows */
+        try {
+            const db = getEngineConfig().db;
+            if (db)
+                await db.table('singleUserConfig').delete('lock_state');
+        }
+        catch (e) {
+            debugWarn('[SingleUser] Failed to clear lock state after device verification:', e);
+        }
         debugLog('[SingleUser] Device verification complete, userId:', user.id);
         return { error: null };
     }
