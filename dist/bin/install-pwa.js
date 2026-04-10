@@ -3577,6 +3577,7 @@ function generateLoginPage(opts) {
 -->
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/stores';
   import {
@@ -3934,6 +3935,7 @@ function generateLoginPage(opts) {
           clearInterval(retryTimer);
           retryTimer = null;
         }
+        tick().then(() => { unlockInputs[0]?.focus(); });
       }
     }, 1000);
   }
@@ -4231,12 +4233,15 @@ function generateLoginPage(opts) {
         error = result.error;
         if (result.retryAfterMs) {
           startRetryCountdown(result.retryAfterMs);
+        } else {
+          setTimeout(() => { if (retryCountdown === 0) error = null; }, 2500);
         }
         shaking = true;
-        setTimeout(() => {
-          shaking = false;
-        }, 500);
+        setTimeout(() => { shaking = false; }, 500);
         unlockDigits = ['', '', '', '', '', ''];
+        loading = false;
+        await tick();
+        if (unlockInputs[0]) unlockInputs[0].focus();
         return;
       }
       if (result.deviceVerificationRequired) {
@@ -4253,10 +4258,9 @@ function generateLoginPage(opts) {
       return;
     } catch (err: unknown) {
       error = err instanceof Error ? err.message : 'Incorrect code';
+      setTimeout(() => { if (retryCountdown === 0) error = null; }, 2500);
       shaking = true;
-      setTimeout(() => {
-        shaking = false;
-      }, 500);
+      setTimeout(() => { shaking = false; }, 500);
       unlockDigits = ['', '', '', '', '', ''];
     }
     loading = false;
@@ -4301,12 +4305,16 @@ function generateLoginPage(opts) {
         error = result.error;
         if (result.retryAfterMs) {
           startRetryCountdown(result.retryAfterMs);
+        } else {
+          setTimeout(() => { if (retryCountdown === 0) error = null; }, 2500);
         }
         shaking = true;
-        setTimeout(() => {
-          shaking = false;
-        }, 500);
+        setTimeout(() => { shaking = false; }, 500);
         linkDigits = Array(remoteUser.codeLength).fill('');
+        linkInputs.forEach(inp => { if (inp) inp.value = ''; });
+        linkLoading = false;
+        await tick();
+        if (linkInputs[0]) linkInputs[0].focus();
         return;
       }
       if (result.deviceVerificationRequired) {
@@ -4322,11 +4330,11 @@ function generateLoginPage(opts) {
       return;
     } catch (err: unknown) {
       error = err instanceof Error ? err.message : 'Incorrect code';
+      setTimeout(() => { if (retryCountdown === 0) error = null; }, 2500);
       shaking = true;
-      setTimeout(() => {
-        shaking = false;
-      }, 500);
+      setTimeout(() => { shaking = false; }, 500);
       linkDigits = Array(remoteUser.codeLength).fill('');
+      linkInputs.forEach(inp => { if (inp) inp.value = ''; });
     }
     linkLoading = false;
     if (error) {
@@ -4340,30 +4348,360 @@ function generateLoginPage(opts) {
   <title>Login - ${opts.name}</title>
 </svelte:head>
 
-<!--
-  TODO: Add login page template with PIN inputs, setup wizard, and device verification modal.
-  Required UI patterns for each PIN-entry section (unlock + link modes):
+<!-- ================================================================= -->
+<!--  LOGIN PAGE                                                        -->
+<!--  Style this page to match your app's design theme.                -->
+<!--  The structure and behaviour are fully implemented below.         -->
+<!-- ================================================================= -->
+<div class="login-page" class:mounted>
 
-  1. Disable PIN inputs during lockout:
-       disabled={loading || retryCountdown > 0}
+  {#if resolving}
+    <!-- Loading / resolving initial auth state -->
+    <div class="login-card">
+      <p class="resolving-text">Loading...</p>
+    </div>
 
-  2. Show lockout banner when rate-limited (takes precedence over error):
-       {#if retryCountdown > 0}
-         <div class="lockout-banner">
-           <!-- lock icon -->
-           <span>Too many attempts — try again in {formatCountdown(retryCountdown)}</span>
-         </div>
-       {:else if error}
-         <div class="error-banner">
-           <!-- info icon -->
-           <span>{error}</span>
-         </div>
-       {/if}
+  {:else if offlineNoSetup}
+    <!-- Offline with no local account — can't set up without internet -->
+    <div class="login-card">
+      <h2 class="card-title">Setup Required</h2>
+      <p class="card-subtitle">An internet connection is required to set up this device</p>
+    </div>
 
-  Style \`.lockout-banner\` with amber/warning tones distinct from the regular
-  error style so users immediately understand they are temporarily locked out
-  rather than seeing a generic failure.
--->
+  {:else if deviceLinked}
+    <!-- ── Unlock Mode — returning user on this device ── -->
+    <div class="login-card" class:shaking>
+      <div class="avatar">
+        {(userInfo?.firstName || 'U').charAt(0).toUpperCase()}
+      </div>
+      <h2 class="card-title">
+        Welcome back{#if userInfo?.firstName}, {userInfo.firstName}{/if}
+      </h2>
+      <p class="card-subtitle">Enter your code to continue</p>
+
+      {#if loading}
+        <div class="pin-loading"><span class="spinner"></span></div>
+      {:else}
+        <div class="pin-row">
+          {#each unlockDigits as digit, i (i)}
+            <input
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              class="pin-digit"
+              bind:this={unlockInputs[i]}
+              value={digit}
+              oninput={(e) => handleDigitInput(unlockDigits, i, e, unlockInputs, autoSubmitUnlock)}
+              onkeydown={(e) => handleDigitKeydown(unlockDigits, i, e, unlockInputs)}
+              onpaste={(e) => handleDigitPaste(unlockDigits, e, unlockInputs, autoSubmitUnlock)}
+              disabled={loading || retryCountdown > 0}
+              autocomplete="off"
+            />
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+  {:else if linkMode && remoteUser}
+    <!-- ── Link Device Mode — new device, existing remote user ── -->
+    <div class="login-card" class:shaking>
+      <div class="avatar">
+        {((remoteUser.profile?.firstName as string) || 'U').charAt(0).toUpperCase()}
+      </div>
+      <h2 class="card-title">
+        Welcome back{remoteUser.profile?.firstName ? \`, \${remoteUser.profile.firstName as string}\` : ''}
+      </h2>
+      <p class="card-subtitle">Enter your code to link this device</p>
+
+      {#if linkLoading}
+        <div class="pin-loading"><span class="spinner"></span></div>
+      {:else}
+        <div class="pin-row">
+          {#each linkDigits as digit, i (i)}
+            <input
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              class="pin-digit"
+              bind:this={linkInputs[i]}
+              value={digit}
+              oninput={(e) => handleDigitInput(linkDigits, i, e, linkInputs, autoSubmitLink)}
+              onkeydown={(e) => handleDigitKeydown(linkDigits, i, e, linkInputs)}
+              onpaste={(e) => handleDigitPaste(linkDigits, e, linkInputs, autoSubmitLink)}
+              disabled={linkLoading || retryCountdown > 0}
+              autocomplete="off"
+            />
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+  {:else}
+    <!-- ── Setup Mode — first-time account creation ── -->
+    <div class="login-card" class:shaking>
+      {#if setupStep === 1}
+        <!-- Step 1: Email + name -->
+        <h2 class="card-title">Create your account</h2>
+
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" bind:value={email} disabled={loading} placeholder="you@example.com" />
+        </div>
+        <div class="name-row">
+          <div class="form-group">
+            <label for="firstName">First Name</label>
+            <input type="text" id="firstName" bind:value={firstName} disabled={loading} placeholder="Jane" />
+          </div>
+          <div class="form-group">
+            <label for="lastName">Last Name</label>
+            <input type="text" id="lastName" bind:value={lastName} disabled={loading} placeholder="Smith" />
+          </div>
+        </div>
+        <button class="btn-primary" onclick={goToCodeStep} disabled={loading}>
+          Continue
+        </button>
+
+      {:else}
+        <!-- Step 2: PIN creation + confirmation -->
+        <h2 class="card-title">Create your PIN</h2>
+        <p class="card-subtitle">Choose a 6-digit code</p>
+
+        <div class="pin-row">
+          {#each codeDigits as digit, i (i)}
+            <input
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              class="pin-digit"
+              bind:this={codeInputs[i]}
+              value={digit}
+              oninput={(e) => handleDigitInput(codeDigits, i, e, codeInputs, autoFocusConfirm)}
+              onkeydown={(e) => handleDigitKeydown(codeDigits, i, e, codeInputs)}
+              onpaste={(e) => handleDigitPaste(codeDigits, e, codeInputs, autoFocusConfirm)}
+              disabled={loading}
+              autocomplete="off"
+            />
+          {/each}
+        </div>
+
+        <p class="card-subtitle">Confirm your code</p>
+        <div class="pin-row">
+          {#each confirmDigits as digit, i (i)}
+            <input
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              class="pin-digit"
+              bind:this={confirmInputs[i]}
+              value={digit}
+              oninput={(e) => handleDigitInput(confirmDigits, i, e, confirmInputs, autoSubmitSetup)}
+              onkeydown={(e) => handleDigitKeydown(confirmDigits, i, e, confirmInputs)}
+              onpaste={(e) => handleDigitPaste(confirmDigits, e, confirmInputs, autoSubmitSetup)}
+              disabled={loading}
+              autocomplete="off"
+            />
+          {/each}
+        </div>
+
+        <button class="btn-secondary" onclick={goBackToNameStep} disabled={loading}>
+          Back
+        </button>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- ── Bottom Status Banner ──────────────────────────────────────── -->
+  <!--  Lockout: stays visible the entire countdown duration.          -->
+  <!--  Error:   auto-dismissed after 2.5s by the handlers above.      -->
+  {#if retryCountdown > 0}
+    <div class="bottom-banner lockout-banner" transition:fade={{ duration: 250 }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+      <span>Too many attempts — try again in {formatCountdown(retryCountdown)}</span>
+    </div>
+  {:else if error}
+    <div class="bottom-banner error-banner" transition:fade={{ duration: 250 }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+      <span>{error}</span>
+    </div>
+  {/if}
+</div>
+
+<!-- ── Email Confirmation Modal ──────────────────────────────────── -->
+{#if showConfirmationModal}
+  <div class="modal-backdrop">
+    <div class="modal-card">
+      <h3 class="modal-title">Check your email</h3>
+      <p class="modal-text">
+        We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.
+      </p>
+      <button class="btn-primary" onclick={handleResendEmail} disabled={resendCooldown > 0}>
+        {#if resendCooldown > 0}Resend in {resendCooldown}s{:else}Resend email{/if}
+      </button>
+    </div>
+  </div>
+{/if}
+
+<!-- ── Device Verification Modal ─────────────────────────────────── -->
+{#if showDeviceVerificationModal}
+  <div class="modal-backdrop">
+    <div class="modal-card">
+      <h3 class="modal-title">New device detected</h3>
+      <p class="modal-text">
+        We sent a verification link to <strong>{maskedEmail}</strong>. Click it to trust this device.
+      </p>
+      <p class="modal-hint">This page will update automatically once verified.</p>
+      <button class="btn-primary" onclick={handleResendEmail} disabled={resendCooldown > 0}>
+        {#if resendCooldown > 0}Resend in {resendCooldown}s{:else}Resend email{/if}
+      </button>
+    </div>
+  </div>
+{/if}
+
+<style>
+  /* ================================================================= */
+  /*  STRUCTURAL STYLES — behaviour and layout only.                   */
+  /*  Add colours, typography, and visual design to match your theme.  */
+  /* ================================================================= */
+
+  /* Full-viewport container */
+  .login-page {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+
+  /* Card centred on screen */
+  .login-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    padding: 2rem;
+    border-radius: 20px;
+    width: 100%;
+    max-width: 360px;
+    text-align: center;
+  }
+
+  /* Avatar circle */
+  .avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+
+  /* ── PIN row ── */
+  .pin-row {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+  }
+
+  .pin-digit {
+    width: 48px;
+    height: 56px;
+    text-align: center;
+    font-size: 1.375rem;
+    font-weight: 700;
+    border-radius: 10px;
+    /* Add border, background, focus ring */
+  }
+
+  /* Spinner placeholder */
+  .pin-loading {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ── Setup form ── */
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    text-align: left;
+    width: 100%;
+  }
+
+  .name-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    width: 100%;
+  }
+
+  /* ── Shake animation (decelerating — same in both apps) ── */
+  .shaking {
+    animation: shake 0.5s ease-in-out;
+  }
+
+  @keyframes shake {
+    0%,  100% { transform: translateX(0); }
+    15%       { transform: translateX(-8px); }
+    30%       { transform: translateX(7px); }
+    45%       { transform: translateX(-6px); }
+    60%       { transform: translateX(4px); }
+    75%       { transform: translateX(-2px); }
+  }
+
+  /* ── Bottom status banner ── */
+  /*  Fixed pill anchored to bottom of viewport.                       */
+  /*  Lockout stays; error auto-dismisses via JS after 2.5s.           */
+  .bottom-banner {
+    position: fixed;
+    bottom: max(32px, calc(env(safe-area-inset-bottom) + 20px));
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.125rem;
+    border-radius: 100px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    white-space: nowrap;
+    z-index: 200;
+    /* Add backdrop-filter, background, border, color */
+  }
+
+  /* ── Modals ── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+    padding: 1rem;
+    /* Add background overlay */
+  }
+
+  .modal-card {
+    width: 100%;
+    max-width: 380px;
+    padding: 2rem;
+    border-radius: 20px;
+    text-align: center;
+    /* Add background, border, shadow */
+  }
+</style>
 `;
 }
 /**
