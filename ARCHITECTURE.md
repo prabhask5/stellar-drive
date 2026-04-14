@@ -1588,6 +1588,37 @@ Consumer apps typically create many collection stores and detail stores. The sto
 - Same pattern for single-entity views
 - Adds ID tracking so `onSyncComplete` refreshes the correct entity
 
+### 11.6 Choosing Between `load()`, `refresh()`, and `mutate()`
+
+| Method | Loading spinner | IndexedDB re-query | Use when |
+|--------|----------------|--------------------|----------|
+| `load()` | Yes | Yes | Initial page load; cold start where data may be absent |
+| `refresh()` | No | Yes | After external sync or cascading writes; background re-read |
+| `mutate(fn)` | No | No | After a local write — instant optimistic in-memory update |
+
+**Optimistic update pattern** (preferred after writes):
+
+```ts
+// After create: spread the returned record directly into the store
+const created = await engineCreate('tasks', payload);
+store.mutate(items => [...items, created as Task]);
+
+// After update: swap the modified record in-place
+const updated = await engineUpdate('tasks', id, delta);
+if (updated) store.mutate(items => items.map(i => i.id === id ? updated as Task : i));
+
+// After delete: filter out the removed record
+store.mutate(items => items.filter(i => i.id !== id));
+```
+
+Both `engineCreate` and `engineUpdate` return the full persisted record (with `created_at`, `updated_at`, `_version`, etc.), so the mutated state is immediately accurate without a re-query.
+
+**Why avoid `store.load()` after writes**: it shows a loading spinner and triggers a full IndexedDB scan. With `mutate()`, the UI updates in < 1ms. The store still auto-refreshes from IndexedDB on the next `onSyncComplete` callback, which corrects any discrepancy.
+
+**Exception — use `store.refresh()` when**:
+- The write cascades to other records (e.g., deleting a category clears `category_id` on many transactions)
+- The full updated state cannot be derived from the engine return value alone (e.g., joined/aggregated queries)
+
 ---
 
 ## 12. Svelte Actions

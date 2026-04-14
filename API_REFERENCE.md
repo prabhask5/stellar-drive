@@ -2483,6 +2483,29 @@ await tasksStore.load();
 // The store auto-refreshes after every sync cycle
 ```
 
+**Best practice — optimistic updates after writes:**
+```ts
+import { get } from 'svelte/store';
+
+// After create: use the returned record directly
+const created = await engineCreate('tasks', payload);
+tasksStore.mutate(items => [...items, created as Task]);
+
+// After update: swap in-place using the returned record
+const updated = await engineUpdate('tasks', id, delta);
+if (updated) tasksStore.mutate(items => items.map(i => i.id === id ? updated as Task : i));
+
+// After delete: filter out
+tasksStore.mutate(items => items.filter(i => i.id !== id));
+
+// Reading current store value without subscribing:
+const current = get(tasksStore) as Task[];
+```
+
+Prefer `mutate()` over `load()` after writes. `load()` re-queries IndexedDB and shows a loading spinner; `mutate()` updates in-memory state in < 1ms. The store auto-refreshes from IndexedDB on the next `onSyncComplete` anyway.
+
+Use `store.refresh()` (no spinner) instead of `mutate()` when the write causes cascading changes that affect other records — the in-memory state alone cannot reflect the full result.
+
 ---
 
 #### `createDetailStore(config)`
