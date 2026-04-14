@@ -19,6 +19,24 @@
 import Dexie from 'dexie';
 
 // =============================================================================
+// System Table Name Constants
+// =============================================================================
+
+/**
+ * Canonical names for the engine's internal (system) IndexedDB tables.
+ *
+ * Use these constants instead of bare string literals when reading from or
+ * writing to system tables. This makes refactors and typos immediately visible
+ * at compile time.
+ */
+export const TABLE = {
+  SINGLE_USER_CONFIG: 'singleUserConfig',
+  OFFLINE_CREDENTIALS: 'offlineCredentials',
+  OFFLINE_SESSION: 'offlineSession',
+  CONFLICT_HISTORY: 'conflictHistory'
+} as const;
+
+// =============================================================================
 // Configuration Interfaces
 // =============================================================================
 

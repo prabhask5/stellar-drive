@@ -64,7 +64,7 @@
  */
 import { debugLog, debugWarn } from './debug';
 import { isDebugMode } from './debug';
-import { getEngineConfig } from './config';
+import { getDb } from './database';
 import { isDemoMode } from './demo';
 import { syncStatusStore } from './stores/sync';
 // =============================================================================
@@ -84,21 +84,6 @@ const MAX_SYNC_RETRIES = 5;
 // =============================================================================
 // Internal Helpers
 // =============================================================================
-/**
- * Retrieve the Dexie database instance from the global engine configuration.
- *
- * @returns The configured Dexie database. Assumes `getEngineConfig().db` is non-null
- *          (the engine must be initialized before any queue operations).
- *
- * @throws Will throw a TypeError if the engine has not been initialized
- *         (`db` is null/undefined). This is intentional -- queue operations
- *         before engine init indicate a programming error.
- *
- * @see {@link getEngineConfig} for the configuration provider.
- */
-function getDb() {
-    return getEngineConfig().db;
-}
 // =============================================================================
 // Coalescing Pipeline (Public Entry Point)
 // =============================================================================

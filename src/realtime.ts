@@ -74,7 +74,13 @@
  */
 
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
-import { getEngineConfig, getDexieTableFor } from './config';
+import {
+  getEngineConfig,
+  getDexieTableFor,
+  findTableConfig,
+  RECENTLY_MODIFIED_TTL_MS
+} from './config';
+import { getDb } from './database';
 import { getDeviceId } from './deviceId';
 import { resolveConflicts, storeConflictHistory, getPendingOpsForEntity } from './conflicts';
 import { getPendingEntityIds } from './queue';
@@ -85,20 +91,6 @@ import { isDemoMode } from './demo';
 // =============================================================================
 // CONSTANTS
 // =============================================================================
-
-/**
- * How long (in ms) a processed entity is considered "recent."
- * Must match the TTL used in engine.ts for `recentlyModifiedEntities`
- * so that the deduplication windows overlap correctly.
- *
- * **Why 2 seconds?** This window must be long enough to span the typical
- * latency gap between a realtime WebSocket push and the next polling cycle.
- * If the poll fires within 2s of the realtime event, the entity will still
- * be in the dedup map and the poll result will be skipped.
- *
- * @see {@link ./engine.ts} -- `RECENTLY_MODIFIED_TTL_MS`
- */
-const RECENTLY_MODIFIED_TTL_MS = 2000;
 
 /**
  * Maximum number of reconnection attempts before the module gives up
@@ -651,7 +643,7 @@ async function handleRealtimeChange(
 
   debugLog(`[Realtime] Processing remote change: ${eventType} ${table}/${entityId}`);
 
-  const tableConfig = getEngineConfig().tables.find((t) => t.supabaseName === table);
+  const tableConfig = findTableConfig(table);
   const dexieTable = tableConfig ? getDexieTableFor(tableConfig) : undefined;
   if (!tableConfig || !dexieTable) {
     debugWarn('[Realtime] Unknown table:', table);
@@ -679,7 +671,7 @@ async function handleRealtimeChange(
         const _isBeingEdited = remoteChangesStore.isEditing(entityId, entityTypeKey);
 
         /* Fetch the local version so we can diff fields and detect conflicts. */
-        const localEntity = await getEngineConfig().db!.table(dexieTable).get(entityId);
+        const localEntity = await getDb().table(dexieTable).get(entityId);
 
         /* Build a list of fields whose values actually differ between local
            and remote. We skip metadata fields (updated_at, _version) because
@@ -721,7 +713,7 @@ async function handleRealtimeChange(
           await remoteChangesStore.markPendingDelete(entityId, entityTypeKey);
 
           /* Now persist the soft-deleted record; reactive stores refresh. */
-          await getEngineConfig().db!.table(dexieTable).put(newRecord);
+          await getDb().table(dexieTable).put(newRecord);
 
           recentlyProcessedByRealtime.set(entityId, Date.now());
           notifyDataUpdate(entityTypeKey, entityId);
@@ -746,7 +738,7 @@ async function handleRealtimeChange(
         if (!localEntity) {
           /* Branch 1: Entity doesn't exist locally -- just insert.
              This happens when another device creates a new entity. */
-          await getEngineConfig().db!.table(dexieTable).put(newRecord);
+          await getDb().table(dexieTable).put(newRecord);
           applied = true;
         } else if (!hasPendingOps) {
           /* Branch 2: No unsynced local changes -- simple timestamp comparison.
@@ -758,7 +750,7 @@ async function handleRealtimeChange(
           const remoteUpdatedAt = new Date(newRecord.updated_at as string).getTime();
 
           if (remoteUpdatedAt > localUpdatedAt) {
-            await getEngineConfig().db!.table(dexieTable).put(newRecord);
+            await getDb().table(dexieTable).put(newRecord);
             applied = true;
           }
         } else {
@@ -775,7 +767,7 @@ async function handleRealtimeChange(
             pendingOps
           );
 
-          await getEngineConfig().db!.table(dexieTable).put(resolution.mergedEntity);
+          await getDb().table(dexieTable).put(resolution.mergedEntity);
           applied = true;
 
           /* Persist conflict history for auditability and potential undo.
@@ -853,7 +845,7 @@ async function handleRealtimeChange(
           await remoteChangesStore.markPendingDelete(entityId, entityTypeKey);
 
           /* Now remove the record from Dexie (triggers reactive DOM removal). */
-          await getEngineConfig().db!.table(dexieTable).delete(entityId);
+          await getDb().table(dexieTable).delete(entityId);
 
           recentlyProcessedByRealtime.set(entityId, Date.now());
 

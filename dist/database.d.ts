@@ -17,6 +17,19 @@
  */
 import Dexie from 'dexie';
 /**
+ * Canonical names for the engine's internal (system) IndexedDB tables.
+ *
+ * Use these constants instead of bare string literals when reading from or
+ * writing to system tables. This makes refactors and typos immediately visible
+ * at compile time.
+ */
+export declare const TABLE: {
+    readonly SINGLE_USER_CONFIG: "singleUserConfig";
+    readonly OFFLINE_CREDENTIALS: "offlineCredentials";
+    readonly OFFLINE_SESSION: "offlineSession";
+    readonly CONFLICT_HISTORY: "conflictHistory";
+};
+/**
  * A single database version declaration.
  *
  * Maps to a Dexie `.version(n).stores({...}).upgrade(fn)` call.

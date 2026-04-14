@@ -59,8 +59,8 @@
  * @see {@link ./realtime.ts} - Supabase Realtime WebSocket subscriptions
  * @see {@link ./config.ts} - Engine configuration and table definitions
  */
-import { getEngineConfig, getDexieTableFor, waitForDb } from './config';
-import { clearDbResetFlag } from './database';
+import { getEngineConfig, getDexieTableFor, waitForDb, findTableConfig, RECENTLY_MODIFIED_TTL_MS } from './config';
+import { clearDbResetFlag, getDb, TABLE } from './database';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import { getPendingSync, removeSyncItem, bulkRemoveSyncItems, incrementRetry, getPendingEntityIds, cleanupFailedItems, coalescePendingOps, queueSyncOperation } from './queue';
 import { getDeviceId } from './deviceId';
@@ -71,7 +71,7 @@ import { isOnline } from './stores/network';
 import { getSession } from './supabase/auth';
 import { supabase as supabaseProxy } from './supabase/client';
 import { getOfflineCredentials } from './auth/offlineCredentials';
-import { getValidOfflineSession, createOfflineSession } from './auth/offlineSession';
+import { getOfflineSession, createOfflineSession } from './auth/offlineSession';
 import { validateSchema } from './supabase/validate';
 import { formatBytes } from './utils';
 import { getDiagnostics } from './diagnostics';
@@ -85,18 +85,6 @@ import { isDemoMode } from './demo';
 // so we can't read config values at module load time (they'd be undefined).
 // Each function reads from the live config on every call to support hot-reloading.
 // =============================================================================
-/**
- * Get the Dexie database instance from the engine config.
- *
- * @returns The initialized Dexie database
- * @throws {Error} If the database hasn't been initialized via `initEngine()`
- */
-function getDb() {
-    const db = getEngineConfig().db;
-    if (!db)
-        throw new Error('Database not initialized. Provide db or database config to initEngine().');
-    return db;
-}
 /**
  * Get the Supabase client instance.
  *
@@ -121,7 +109,7 @@ function getSupabase() {
  * @returns The local Dexie table name (may include a prefix)
  */
 function getDexieTableName(name) {
-    const table = getEngineConfig().tables.find((t) => t.supabaseName === name || t.schemaKey === name);
+    const table = findTableConfig(name);
     return table ? getDexieTableFor(table) : name;
 }
 /**
@@ -135,8 +123,7 @@ function getDexieTableName(name) {
  * @returns PostgREST column selector (e.g., `"id,name,updated_at"` or `"*"`)
  */
 function getColumns(name) {
-    const table = getEngineConfig().tables.find((t) => t.supabaseName === name || t.schemaKey === name);
-    return table?.columns || '*';
+    return findTableConfig(name)?.columns || '*';
 }
 /**
  * Guarantee mandatory system-field defaults on an outbound sync payload.
@@ -198,8 +185,7 @@ function filterPayloadToSchema(tableName, payload) {
  * @returns `true` if the table is a singleton
  */
 function isSingletonTable(name) {
-    const table = getEngineConfig().tables.find((t) => t.supabaseName === name || t.schemaKey === name);
-    return table?.isSingleton || false;
+    return findTableConfig(name)?.isSingleton || false;
 }
 // --- Timing & Threshold Config Accessors ---
 // Each has a sensible default if not configured by the consumer.
@@ -451,18 +437,7 @@ let realtimeWasTornDown = false;
 let lastRealtimeStartAt = 0;
 /** Debounce delay for visibility-change syncs (prevents rapid tab-switching spam) */
 const VISIBILITY_SYNC_DEBOUNCE_MS = 1000;
-/**
- * How long a locally-modified entity is "protected" from being overwritten by pull.
- *
- * When the user writes locally, the entity is marked as recently modified.
- * During pull, if a remote version arrives within this TTL, it's skipped to
- * prevent the pull from reverting the user's fresh local change before the
- * push has a chance to send it to the server.
- *
- * Industry standard range: 500ms–2000ms. We use 2s to cover the sync debounce
- * window (1s default) plus network latency with margin.
- */
-const RECENTLY_MODIFIED_TTL_MS = 2000;
+/* RECENTLY_MODIFIED_TTL_MS is imported from './config' — see that module for docs. */
 /**
  * Map of entity ID → timestamp for recently modified entities.
  *
@@ -906,7 +881,7 @@ async function forceFullSync() {
     }
     try {
         const config = getEngineConfig();
-        const db = config.db;
+        const db = getDb();
         await resetSyncCursor();
         // Clear local data (except sync queue - keep pending changes)
         const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
@@ -972,7 +947,7 @@ async function pullRemoteChanges(minCursor) {
         throw new Error('Not authenticated. Please sign in to sync.');
     }
     const config = getEngineConfig();
-    const db = config.db;
+    const db = getDb();
     const supabase = config.supabase;
     // Use the later of stored cursor or provided minCursor
     // This prevents re-fetching records we just pushed in this sync cycle
@@ -1097,7 +1072,7 @@ async function pullRemoteChanges(minCursor) {
     // Check if any table has data to process (avoid opening transaction on empty pull)
     const hasData = results.some((r) => r.data && r.data.length > 0);
     if (hasData) {
-        await db.transaction('rw', [...entityTables, db.table('syncQueue'), db.table('conflictHistory')], async () => {
+        await db.transaction('rw', [...entityTables, db.table('syncQueue'), db.table(TABLE.CONFLICT_HISTORY)], async () => {
             for (let i = 0; i < config.tables.length; i++) {
                 const data = results[i].data;
                 await applyRemoteWithConflictResolution(tableNames[i], data, db.table(getDexieTableFor(config.tables[i])));
@@ -1269,8 +1244,8 @@ async function pushPendingOps() {
                     if (!schema)
                         return 0;
                     // Resolve schema keys from supabase names (strip prefix)
-                    const configA = getEngineConfig().tables.find((t) => t.supabaseName === tableA);
-                    const configB = getEngineConfig().tables.find((t) => t.supabaseName === tableB);
+                    const configA = findTableConfig(tableA);
+                    const configB = findTableConfig(tableB);
                     const keyA = configA?.schemaKey || tableA;
                     const keyB = configB?.schemaKey || tableB;
                     const aIsChild = isChildTable(schema, keyA);
@@ -2347,7 +2322,7 @@ async function fullReconciliation() {
     if (!userId)
         return 0;
     const config = getEngineConfig();
-    const db = config.db;
+    const db = getDb();
     const supabase = config.supabase;
     // Check if cursor is stale enough to warrant full reconciliation
     const cursor = getLastSyncCursor(userId);
@@ -2438,7 +2413,7 @@ async function hydrateFromRemote() {
         return;
     }
     const config = getEngineConfig();
-    const db = config.db;
+    const db = getDb();
     const supabase = config.supabase;
     // Get user ID for sync cursor isolation
     const userId = await getCurrentUserId();
@@ -2599,7 +2574,7 @@ async function cleanupLocalTombstones() {
     cutoffDate.setDate(cutoffDate.getDate() - tombstoneMaxAgeDays);
     const cutoffStr = cutoffDate.toISOString();
     const config = getEngineConfig();
-    const db = config.db;
+    const db = getDb();
     let totalDeleted = 0;
     try {
         const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
@@ -2710,7 +2685,7 @@ async function debugTombstones(options) {
     cutoffDate.setDate(cutoffDate.getDate() - tombstoneMaxAgeDays);
     const cutoffStr = cutoffDate.toISOString();
     const config = getEngineConfig();
-    const db = config.db;
+    const db = getDb();
     const supabase = config.supabase;
     debugLog('=== TOMBSTONE DEBUG ===');
     debugLog(`Cutoff date (${tombstoneMaxAgeDays} days ago): ${cutoffStr}`);
@@ -2950,7 +2925,7 @@ export async function startSyncEngine() {
                 debugWarn('[Engine] Cached credentials do not match current user - skipping offline session creation');
                 return;
             }
-            const existingSession = await getValidOfflineSession();
+            const existingSession = await getOfflineSession();
             if (!existingSession) {
                 await createOfflineSession(credentials.userId);
                 debugLog('[Engine] Offline session created from cached credentials');
@@ -3029,7 +3004,7 @@ export async function startSyncEngine() {
                     credentials.email !== currentSession.user.email) {
                     return;
                 }
-                const existingSession = await getValidOfflineSession();
+                const existingSession = await getOfflineSession();
                 if (!existingSession) {
                     await createOfflineSession(credentials.userId);
                     debugLog('[Engine] Offline session created on cold start');
@@ -3342,17 +3317,17 @@ export async function stopSyncEngine() {
  */
 export async function clearLocalCache() {
     const config = getEngineConfig();
-    const db = config.db;
+    const db = getDb();
     // Get user ID before clearing to remove their sync cursor
     const userId = await getCurrentUserId();
     const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
-    const metaTables = [db.table('syncQueue'), db.table('conflictHistory')];
+    const metaTables = [db.table('syncQueue'), db.table(TABLE.CONFLICT_HISTORY)];
     await db.transaction('rw', [...entityTables, ...metaTables], async () => {
         for (const t of entityTables) {
             await t.clear();
         }
         await db.table('syncQueue').clear();
-        await db.table('conflictHistory').clear();
+        await db.table(TABLE.CONFLICT_HISTORY).clear();
     });
     // Reset sync cursor (user-specific) and hydration flag
     if (typeof localStorage !== 'undefined') {

@@ -51,6 +51,7 @@
 
 import type { SingleUserConfig } from '../types';
 import { getEngineConfig, waitForDb } from '../config';
+import { getDb, TABLE } from '../database';
 import { supabase } from '../supabase/client';
 import { hashValue } from './crypto';
 import { cacheOfflineCredentials } from './offlineCredentials';
@@ -70,24 +71,12 @@ import { preCheckLogin, onLoginSuccess, onLoginFailure } from './loginGuard';
 import { isDemoMode } from '../demo';
 import type { PreCheckStrategy } from './loginGuard';
 
-/** Constant key used for the single config record in IndexedDB. */
-const CONFIG_ID = 'config';
+/** Singleton key used for the single config record in IndexedDB. */
+const CONFIG_KEY = 'config';
 
 // =============================================================================
 // HELPERS
 // =============================================================================
-
-/**
- * Retrieve the Dexie database instance from the engine configuration.
- *
- * @returns The initialized Dexie database instance.
- * @throws {Error} If the database has not been initialized yet (engine not started).
- */
-function getDb() {
-  const db = getEngineConfig().db;
-  if (!db) throw new Error('Database not initialized.');
-  return db;
-}
 
 /**
  * Pad a PIN to meet Supabase's minimum password length.
@@ -152,7 +141,7 @@ function getConfirmRedirectUrl(): string {
 async function readConfig(): Promise<SingleUserConfig | null> {
   await waitForDb();
   const db = getDb();
-  const record = await db.table('singleUserConfig').get(CONFIG_ID);
+  const record = await db.table(TABLE.SINGLE_USER_CONFIG).get(CONFIG_KEY);
   return record as SingleUserConfig | null;
 }
 
@@ -164,7 +153,7 @@ async function readConfig(): Promise<SingleUserConfig | null> {
  */
 async function writeConfig(config: SingleUserConfig): Promise<void> {
   const db = getDb();
-  await db.table('singleUserConfig').put(config);
+  await db.table(TABLE.SINGLE_USER_CONFIG).put(config);
 }
 
 // =============================================================================
@@ -326,7 +315,7 @@ export async function setupSingleUser(
 
       /* Persist config to IndexedDB so subsequent unlocks can work offline */
       const config: SingleUserConfig = {
-        id: CONFIG_ID,
+        id: CONFIG_KEY,
         gateType,
         codeLength,
         gateHash,
@@ -350,7 +339,7 @@ export async function setupSingleUser(
       if (session) {
         /* Cache offline credentials — non-fatal if this fails */
         try {
-          await cacheOfflineCredentials(email, gate, user, session);
+          await cacheOfflineCredentials(email, gate, user);
         } catch (e) {
           debugWarn('[SingleUser] Failed to cache offline credentials:', e);
         }
@@ -382,7 +371,7 @@ export async function setupSingleUser(
       const tempUserId = crypto.randomUUID();
 
       const config: SingleUserConfig = {
-        id: CONFIG_ID,
+        id: CONFIG_KEY,
         gateType,
         codeLength,
         gateHash,
@@ -460,7 +449,7 @@ export async function completeSingleUserSetup(): Promise<{ error: string | null 
     /* Cache offline credentials — uses gateHash as password fallback
        since we no longer have the raw gate at this point */
     try {
-      await cacheOfflineCredentials(config.email || '', config.gateHash || '', user, session);
+      await cacheOfflineCredentials(config.email || '', config.gateHash || '', user);
     } catch (e) {
       debugWarn('[SingleUser] Failed to cache offline credentials after confirmation:', e);
     }
@@ -648,7 +637,7 @@ export async function unlockSingleUser(gate: string): Promise<{
 
       /* Cache offline credentials for future offline unlocks */
       try {
-        await cacheOfflineCredentials(config.email, gate, user, session);
+        await cacheOfflineCredentials(config.email, gate, user);
       } catch (e) {
         debugWarn('[SingleUser] Failed to update offline credentials:', e);
       }
@@ -673,8 +662,7 @@ export async function unlockSingleUser(gate: string): Promise<{
 
       /* Clear lock flag now that the user has successfully authenticated */
       try {
-        const db = getEngineConfig().db;
-        if (db) await db.table('singleUserConfig').delete('lock_state');
+        await getDb().table(TABLE.SINGLE_USER_CONFIG).delete('lock_state');
       } catch (e) {
         debugWarn('[SingleUser] Failed to clear lock state:', e);
       }
@@ -698,8 +686,7 @@ export async function unlockSingleUser(gate: string): Promise<{
 
         /* Clear lock flag */
         try {
-          const db = getEngineConfig().db;
-          if (db) await db.table('singleUserConfig').delete('lock_state');
+          await getDb().table(TABLE.SINGLE_USER_CONFIG).delete('lock_state');
         } catch (e) {
           debugWarn('[SingleUser] Failed to clear lock state:', e);
         }
@@ -725,8 +712,7 @@ export async function unlockSingleUser(gate: string): Promise<{
 
       /* Clear lock flag now that the user has successfully authenticated */
       try {
-        const db = getEngineConfig().db;
-        if (db) await db.table('singleUserConfig').delete('lock_state');
+        await getDb().table(TABLE.SINGLE_USER_CONFIG).delete('lock_state');
       } catch (e2) {
         debugWarn('[SingleUser] Failed to clear lock state:', e2);
       }
@@ -800,7 +786,7 @@ export async function completeDeviceVerification(
     const config = await readConfig();
     if (config?.email) {
       try {
-        await cacheOfflineCredentials(config.email, config.gateHash || '', user, session);
+        await cacheOfflineCredentials(config.email, config.gateHash || '', user);
       } catch (e) {
         debugWarn('[SingleUser] Failed to cache credentials after device verification:', e);
       }
@@ -819,8 +805,7 @@ export async function completeDeviceVerification(
        this, resolveAuthState() sees locked: true and redirects to /login
        right as goto() fires, causing navigation chaos on cross-device flows */
     try {
-      const db = getEngineConfig().db;
-      if (db) await db.table('singleUserConfig').delete('lock_state');
+      await getDb().table(TABLE.SINGLE_USER_CONFIG).delete('lock_state');
     } catch (e) {
       debugWarn('[SingleUser] Failed to clear lock state after device verification:', e);
     }
@@ -903,8 +888,7 @@ export async function lockSingleUser(): Promise<void> {
      new tab navigations (the Supabase session in localStorage would
      otherwise let users bypass the lock). */
   try {
-    const db = getEngineConfig().db;
-    if (db) await db.table('singleUserConfig').put({ id: 'lock_state', locked: true });
+    await getDb().table(TABLE.SINGLE_USER_CONFIG).put({ id: 'lock_state', locked: true });
   } catch (e) {
     debugError('[SingleUser] Failed to write lock state:', e);
   }
@@ -1018,9 +1002,9 @@ export async function changeSingleUserGate(
     /* Update offline credentials cache to match the new gate */
     try {
       const db = getDb();
-      const creds = await db.table('offlineCredentials').get('current_user');
+      const creds = await db.table(TABLE.OFFLINE_CREDENTIALS).get('current_user');
       if (creds) {
-        await db.table('offlineCredentials').update('current_user', {
+        await db.table(TABLE.OFFLINE_CREDENTIALS).update('current_user', {
           password: newHash,
           cachedAt: new Date().toISOString()
         });
@@ -1095,9 +1079,9 @@ export async function updateSingleUserProfile(
     /* Update offline credentials cache with the new profile */
     try {
       const db = getDb();
-      const creds = await db.table('offlineCredentials').get('current_user');
+      const creds = await db.table(TABLE.OFFLINE_CREDENTIALS).get('current_user');
       if (creds) {
-        await db.table('offlineCredentials').update('current_user', {
+        await db.table(TABLE.OFFLINE_CREDENTIALS).update('current_user', {
           profile,
           cachedAt: new Date().toISOString()
         });
@@ -1209,9 +1193,9 @@ export async function completeSingleUserEmailChange(): Promise<{
     /* Update offline credentials cache with the new email */
     try {
       const db = getDb();
-      const creds = await db.table('offlineCredentials').get('current_user');
+      const creds = await db.table(TABLE.OFFLINE_CREDENTIALS).get('current_user');
       if (creds) {
-        await db.table('offlineCredentials').update('current_user', {
+        await db.table(TABLE.OFFLINE_CREDENTIALS).update('current_user', {
           email: newEmail,
           cachedAt: new Date().toISOString()
         });
@@ -1258,7 +1242,7 @@ export async function resetSingleUser(): Promise<{ error: string | null }> {
 
     try {
       const db = getDb();
-      await db.table('singleUserConfig').delete(CONFIG_ID);
+      await db.table(TABLE.SINGLE_USER_CONFIG).delete(CONFIG_KEY);
     } catch (e) {
       debugWarn('[SingleUser] Failed to clear config on reset:', e);
     }
@@ -1434,7 +1418,7 @@ export async function linkSingleUserDevice(
     const now = new Date().toISOString();
 
     const config: SingleUserConfig = {
-      id: CONFIG_ID,
+      id: CONFIG_KEY,
       gateType,
       codeLength,
       gateHash,
@@ -1479,7 +1463,7 @@ export async function linkSingleUserDevice(
 
     /* Cache offline credentials */
     try {
-      await cacheOfflineCredentials(email, pin, user, session);
+      await cacheOfflineCredentials(email, pin, user);
     } catch (e) {
       debugWarn('[SingleUser] Failed to cache offline credentials on link:', e);
     }
@@ -1540,9 +1524,9 @@ export async function resetSingleUserRemote(): Promise<{ error: string | null }>
     /* Clear local IndexedDB state: config, offline credentials, offline session */
     try {
       const db = getDb();
-      await db.table('singleUserConfig').delete(CONFIG_ID);
-      await db.table('offlineCredentials').delete('current_user');
-      await db.table('offlineSession').delete('current_session');
+      await db.table(TABLE.SINGLE_USER_CONFIG).delete(CONFIG_KEY);
+      await db.table(TABLE.OFFLINE_CREDENTIALS).delete('current_user');
+      await db.table(TABLE.OFFLINE_SESSION).delete('current_session');
     } catch (e) {
       debugWarn('[SingleUser] Failed to clear local state on remote reset:', e);
     }

@@ -25,7 +25,7 @@
  * @module auth/offlineCredentials
  */
 import type { OfflineCredentials } from '../types';
-import type { User, Session } from '@supabase/supabase-js';
+import type { User } from '@supabase/supabase-js';
 /**
  * Cache user credentials for offline login.
  *
@@ -36,8 +36,6 @@ import type { User, Session } from '@supabase/supabase-js';
  * @param email    - The user's email address (used for offline identity matching).
  * @param password - The user's plaintext password. Will be SHA-256-hashed before storage.
  * @param user     - The Supabase `User` object, used to extract `userId` and profile data.
- * @param _session - The Supabase `Session` object. Currently unused but accepted for
- *                   API symmetry with the online auth flow (reserved for future use).
  *
  * @throws {Error} If `email` or `password` is empty (prevents storing incomplete credentials).
  * @throws {Error} If the write-back verification fails (password not persisted in IndexedDB).
@@ -46,14 +44,14 @@ import type { User, Session } from '@supabase/supabase-js';
  * ```ts
  * const { data } = await supabase.auth.signInWithPassword({ email, password });
  * if (data.user && data.session) {
- *   await cacheOfflineCredentials(email, password, data.user, data.session);
+ *   await cacheOfflineCredentials(email, password, data.user);
  * }
  * ```
  *
  * @see {@link getOfflineCredentials} to retrieve the cached credentials.
  * @see {@link clearOfflineCredentials} to remove them on logout.
  */
-export declare function cacheOfflineCredentials(email: string, password: string, user: User, _session: Session): Promise<void>;
+export declare function cacheOfflineCredentials(email: string, password: string, user: User): Promise<void>;
 /**
  * Get cached offline credentials from IndexedDB.
  *

@@ -27,7 +27,8 @@
  *
  * @module auth/offlineSession
  */
-import { getEngineConfig, waitForDb } from '../config';
+import { waitForDb } from '../config';
+import { getDb, TABLE } from '../database';
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -35,7 +36,7 @@ import { getEngineConfig, waitForDb } from '../config';
  * Singleton key for the offline session record in IndexedDB.
  * Only one offline session exists at any given time.
  */
-const SESSION_ID = 'current_session';
+const SESSION_KEY = 'current_session';
 // =============================================================================
 // PUBLIC API
 // =============================================================================
@@ -62,25 +63,25 @@ const SESSION_ID = 'current_session';
  * console.log('Offline token:', session.offlineToken);
  * ```
  *
- * @see {@link getValidOfflineSession} to retrieve the current session.
+ * @see {@link getOfflineSession} to retrieve the current session.
  * @see {@link clearOfflineSession} to revoke the session on logout.
  */
 export async function createOfflineSession(userId) {
     await waitForDb();
     const now = new Date();
-    const db = getEngineConfig().db;
+    const db = getDb();
     const session = {
-        id: SESSION_ID,
+        id: SESSION_KEY,
         userId: userId,
         offlineToken: crypto.randomUUID(),
         createdAt: now.toISOString()
     };
     /* Use put (upsert) to insert or update the singleton record. */
-    await db.table('offlineSession').put(session);
+    await db.table(TABLE.OFFLINE_SESSION).put(session);
     /* Verify the session was persisted by reading it back. Without this check,
        a silent write failure would leave the user in a "logged in" state with
        no session record, causing downstream auth checks to fail. */
-    const verified = await db.table('offlineSession').get(SESSION_ID);
+    const verified = await db.table(TABLE.OFFLINE_SESSION).get(SESSION_KEY);
     if (!verified) {
         throw new Error('Failed to persist offline session');
     }
@@ -89,31 +90,14 @@ export async function createOfflineSession(userId) {
 /**
  * Get the current offline session from IndexedDB.
  *
- * This is an internal helper -- external callers should use
- * {@link getValidOfflineSession} instead, which may include additional
- * validation in the future (e.g., expiration checks).
+ * Sessions do not expire — they are only revoked explicitly on re-authentication
+ * or logout. This function is the single source of truth for offline session state.
  *
  * @returns The current offline session, or `null` if none exists.
- */
-async function getOfflineSession() {
-    await waitForDb();
-    const db = getEngineConfig().db;
-    const session = await db.table('offlineSession').get(SESSION_ID);
-    return session || null;
-}
-/**
- * Get a valid offline session.
- *
- * Currently equivalent to `getOfflineSession()` (sessions do not expire),
- * but exists as a separate function to serve as the future hook for
- * adding expiration, rotation, or other validation logic without changing
- * the public API contract.
- *
- * @returns The current valid offline session, or `null` if no session exists.
  *
  * @example
  * ```ts
- * const session = await getValidOfflineSession();
+ * const session = await getOfflineSession();
  * if (session) {
  *   console.log('User is authenticated offline:', session.userId);
  * }
@@ -121,8 +105,11 @@ async function getOfflineSession() {
  *
  * @see {@link createOfflineSession} to create a new session after verification.
  */
-export async function getValidOfflineSession() {
-    return await getOfflineSession();
+export async function getOfflineSession() {
+    await waitForDb();
+    const db = getDb();
+    const session = await db.table(TABLE.OFFLINE_SESSION).get(SESSION_KEY);
+    return session || null;
 }
 /**
  * Clear the offline session from IndexedDB.
@@ -142,7 +129,7 @@ export async function getValidOfflineSession() {
  */
 export async function clearOfflineSession() {
     await waitForDb();
-    const db = getEngineConfig().db;
-    await db.table('offlineSession').delete(SESSION_ID);
+    const db = getDb();
+    await db.table(TABLE.OFFLINE_SESSION).delete(SESSION_KEY);
 }
 //# sourceMappingURL=offlineSession.js.map

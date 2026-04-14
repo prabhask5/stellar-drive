@@ -67,7 +67,8 @@
  * @see {@link ./queue.ts} for the sync queue that provides pending operations
  */
 import { debugLog, debugError, isDebugMode } from './debug';
-import { getEngineConfig } from './config';
+import { findTableConfig } from './config';
+import { getDb, TABLE } from './database';
 import { getDeviceId } from './deviceId';
 // =============================================================================
 // Configuration Helpers
@@ -100,7 +101,7 @@ import { getDeviceId } from './deviceId';
  */
 function getExcludedFields(entityType) {
     const defaultExcluded = new Set(['id', 'user_id', 'created_at', '_version']);
-    const tableConfig = getEngineConfig().tables.find((t) => t.schemaKey === entityType || t.supabaseName === entityType);
+    const tableConfig = findTableConfig(entityType);
     return new Set([...defaultExcluded, ...(tableConfig?.excludeFromConflict || [])]);
 }
 /**
@@ -133,8 +134,7 @@ function getExcludedFields(entityType) {
  * ```
  */
 function getNumericMergeFields(entityType) {
-    const tableConfig = getEngineConfig().tables.find((t) => t.schemaKey === entityType || t.supabaseName === entityType);
-    return new Set(tableConfig?.numericMergeFields || []);
+    return new Set(findTableConfig(entityType)?.numericMergeFields || []);
 }
 // =============================================================================
 // Core Resolution Logic
@@ -679,7 +679,7 @@ export async function storeConflictHistory(resolution) {
         }));
         /* bulkAdd is used instead of individual adds for efficiency -- one
            IndexedDB transaction instead of N. */
-        await getEngineConfig().db.table('conflictHistory').bulkAdd(entries);
+        await getDb().table(TABLE.CONFLICT_HISTORY).bulkAdd(entries);
     }
     catch (error) {
         /* Non-fatal: conflict history is an audit trail, not a critical operation.
@@ -717,11 +717,7 @@ export async function storeConflictHistory(resolution) {
  * ```
  */
 export async function getPendingOpsForEntity(entityId) {
-    const allPending = await getEngineConfig()
-        .db.table('syncQueue')
-        .where('entityId')
-        .equals(entityId)
-        .toArray();
+    const allPending = await getDb().table('syncQueue').where('entityId').equals(entityId).toArray();
     return allPending;
 }
 // =============================================================================
@@ -771,7 +767,7 @@ export async function getPendingOpsForEntity(entityId) {
  */
 export async function _getRecentConflictHistory(limit = 20) {
     try {
-        const table = getEngineConfig().db.table('conflictHistory');
+        const table = getDb().table(TABLE.CONFLICT_HISTORY);
         const allEntries = (await table.toArray());
         const totalCount = allEntries.length;
         // Sort by timestamp descending (newest first) and take the limit
@@ -790,8 +786,8 @@ export async function cleanupConflictHistory() {
     try {
         /* Filter and delete in one pass. Dexie's `.filter().delete()` iterates
            the table and removes matching rows in a single transaction. */
-        const count = await getEngineConfig()
-            .db.table('conflictHistory')
+        const count = await getDb()
+            .table(TABLE.CONFLICT_HISTORY)
             .filter((entry) => entry.timestamp < cutoffStr)
             .delete();
         if (count > 0) {

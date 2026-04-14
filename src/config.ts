@@ -22,7 +22,6 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
-import type Dexie from 'dexie';
 import type { SingleUserGateType, SchemaDefinition, SchemaTableConfig, AuthConfig } from './types';
 import type { DemoConfig } from './demo';
 import { _setDebugPrefix } from './debug';
@@ -94,8 +93,6 @@ export interface SyncEngineConfig {
    */
   databaseName?: string;
 
-  /** Dexie instance — set internally by `createDatabase()`. Do not set manually. */
-  db?: Dexie;
   /** Supabase client — pass to use a custom client instead of the engine's internal proxy. */
   supabase?: SupabaseClient;
   /** Database creation config — auto-generated when using `schema`, or provided manually. */
@@ -296,11 +293,9 @@ export function initEngine(config: InitEngineInput): void {
     config.database = { ...config.database, name: config.database.name + '_demo' };
   }
 
-  /* Create the Dexie database and store the instance on config for engine.ts access. */
+  /* Create the Dexie database — managedDb is set internally by createDatabase(). */
   if (config.database) {
-    _dbReady = createDatabase(config.database).then((db) => {
-      (config as { db: Dexie }).db = db;
-    });
+    _dbReady = createDatabase(config.database).then(() => {});
   }
 }
 
@@ -416,6 +411,33 @@ export function resolveSupabaseName(schemaKey: string): string {
   );
   return table ? table.supabaseName : schemaKey;
 }
+
+/**
+ * Find the {@link TableConfig} for a given table name.
+ *
+ * Matches against both `supabaseName` and `schemaKey`, so callers can pass
+ * either the prefixed Supabase name (e.g., `'stellar_goals'`) or the raw
+ * schema key (e.g., `'goals'`).
+ *
+ * @param name - The Supabase table name or schema key to look up.
+ * @returns The matching {@link TableConfig}, or `undefined` if not found.
+ */
+export function findTableConfig(name: string): TableConfig | undefined {
+  return getEngineConfig().tables.find((t) => t.supabaseName === name || t.schemaKey === name);
+}
+
+/**
+ * Window (ms) during which a locally-modified entity or a realtime-processed entity
+ * is considered "recent" and protected from duplicate processing.
+ *
+ * Used by both `engine.ts` (local-write protection) and `realtime.ts`
+ * (deduplication against the polling path). Defined here in config to avoid a
+ * circular import between those two modules.
+ *
+ * Industry standard range: 500ms–2000ms. 2s covers the sync debounce window
+ * plus network latency with margin.
+ */
+export const RECENTLY_MODIFIED_TTL_MS = 2000;
 
 // =============================================================================
 // Schema → Config Generation
@@ -614,40 +636,38 @@ function normalizeAuthConfig(auth: InitEngineInput['auth']): SyncEngineConfig['a
 
   /* Flat form (AuthConfig) → convert to nested structure. */
   const flat = auth as AuthConfig;
-  const nested: SyncEngineConfig['auth'] = {};
+  const nested: Record<string, unknown> = {};
 
   /* Map flat singleUser fields to nested singleUser object. */
   const gateType = flat.gateType || 'code';
   const codeLength = flat.codeLength || 6;
-  (nested as Record<string, unknown>).singleUser = {
+  nested.singleUser = {
     gateType,
     ...(gateType === 'code' ? { codeLength } : {})
   };
 
   /* Map flat boolean flags to nested object structures. */
   const emailConfirmation = flat.emailConfirmation !== undefined ? flat.emailConfirmation : true;
-  (nested as Record<string, unknown>).emailConfirmation = { enabled: emailConfirmation };
+  nested.emailConfirmation = { enabled: emailConfirmation };
 
   const deviceVerification = flat.deviceVerification !== undefined ? flat.deviceVerification : true;
-  (nested as Record<string, unknown>).deviceVerification = {
+  nested.deviceVerification = {
     enabled: deviceVerification,
     trustDurationDays: flat.trustDurationDays || 90
   };
 
   /* Pass through remaining fields with defaults. */
-  (nested as Record<string, unknown>).confirmRedirectPath = flat.confirmRedirectPath || '/confirm';
-  (nested as Record<string, unknown>).enableOfflineAuth =
-    flat.enableOfflineAuth !== undefined ? flat.enableOfflineAuth : true;
+  nested.confirmRedirectPath = flat.confirmRedirectPath || '/confirm';
+  nested.enableOfflineAuth = flat.enableOfflineAuth !== undefined ? flat.enableOfflineAuth : true;
   if (flat.sessionValidationIntervalMs !== undefined) {
-    (nested as Record<string, unknown>).sessionValidationIntervalMs =
-      flat.sessionValidationIntervalMs;
+    nested.sessionValidationIntervalMs = flat.sessionValidationIntervalMs;
   }
   if (flat.profileExtractor) {
-    (nested as Record<string, unknown>).profileExtractor = flat.profileExtractor;
+    nested.profileExtractor = flat.profileExtractor;
   }
   if (flat.profileToMetadata) {
-    (nested as Record<string, unknown>).profileToMetadata = flat.profileToMetadata;
+    nested.profileToMetadata = flat.profileToMetadata;
   }
 
-  return nested;
+  return nested as SyncEngineConfig['auth'];
 }

@@ -26,8 +26,9 @@
  */
 
 import { getEngineConfig, waitForDb } from '../config';
+import { getDb, TABLE } from '../database';
 import type { OfflineCredentials } from '../types';
-import type { User, Session } from '@supabase/supabase-js';
+import type { User } from '@supabase/supabase-js';
 import { debugError } from '../debug';
 import { hashValue } from './crypto';
 
@@ -40,7 +41,7 @@ import { hashValue } from './crypto';
  * in the `offlineCredentials` IndexedDB table. Only one credential set is
  * cached at any time.
  */
-const CREDENTIALS_ID = 'current_user';
+const CREDENTIALS_KEY = 'current_user';
 
 // =============================================================================
 // PUBLIC API -- Cache & Retrieve
@@ -56,8 +57,6 @@ const CREDENTIALS_ID = 'current_user';
  * @param email    - The user's email address (used for offline identity matching).
  * @param password - The user's plaintext password. Will be SHA-256-hashed before storage.
  * @param user     - The Supabase `User` object, used to extract `userId` and profile data.
- * @param _session - The Supabase `Session` object. Currently unused but accepted for
- *                   API symmetry with the online auth flow (reserved for future use).
  *
  * @throws {Error} If `email` or `password` is empty (prevents storing incomplete credentials).
  * @throws {Error} If the write-back verification fails (password not persisted in IndexedDB).
@@ -66,7 +65,7 @@ const CREDENTIALS_ID = 'current_user';
  * ```ts
  * const { data } = await supabase.auth.signInWithPassword({ email, password });
  * if (data.user && data.session) {
- *   await cacheOfflineCredentials(email, password, data.user, data.session);
+ *   await cacheOfflineCredentials(email, password, data.user);
  * }
  * ```
  *
@@ -76,8 +75,7 @@ const CREDENTIALS_ID = 'current_user';
 export async function cacheOfflineCredentials(
   email: string,
   password: string,
-  user: User,
-  _session: Session
+  user: User
 ): Promise<void> {
   /* Validate inputs to prevent storing incomplete credentials that would
      cause confusing verification failures later. */
@@ -88,7 +86,7 @@ export async function cacheOfflineCredentials(
 
   await waitForDb();
   const config = getEngineConfig();
-  const db = config.db!;
+  const db = getDb();
 
   /* Extract a normalized profile using the host app's profileExtractor,
      or fall back to raw Supabase user_metadata. This allows the host app
@@ -100,7 +98,7 @@ export async function cacheOfflineCredentials(
   const hashedPassword = await hashValue(password);
 
   const credentials: OfflineCredentials = {
-    id: CREDENTIALS_ID,
+    id: CREDENTIALS_KEY,
     userId: user.id,
     email: email,
     password: hashedPassword,
@@ -109,13 +107,13 @@ export async function cacheOfflineCredentials(
   };
 
   /* Use put (upsert) to insert or update the singleton record. */
-  await db.table('offlineCredentials').put(credentials);
+  await db.table(TABLE.OFFLINE_CREDENTIALS).put(credentials);
 
   /* Paranoid read-back: verify the credentials were stored correctly.
      IndexedDB writes can silently fail in quota-exceeded or private-browsing
      scenarios; catching this early gives a clear error instead of a mysterious
      "wrong password" on the next offline login. */
-  const stored = await db.table('offlineCredentials').get(CREDENTIALS_ID);
+  const stored = await db.table(TABLE.OFFLINE_CREDENTIALS).get(CREDENTIALS_KEY);
   if (!stored || !stored.password) {
     debugError('[Auth] Credentials were not stored correctly - password missing');
     throw new Error('Failed to store credentials: password not persisted');
@@ -141,8 +139,8 @@ export async function cacheOfflineCredentials(
  */
 export async function getOfflineCredentials(): Promise<OfflineCredentials | null> {
   await waitForDb();
-  const db = getEngineConfig().db!;
-  const credentials = await db.table('offlineCredentials').get(CREDENTIALS_ID);
+  const db = getDb();
+  const credentials = await db.table(TABLE.OFFLINE_CREDENTIALS).get(CREDENTIALS_KEY);
   if (!credentials) {
     return null;
   }
@@ -176,8 +174,8 @@ export async function updateOfflineCredentialsProfile(
     return;
   }
 
-  const db = getEngineConfig().db!;
-  await db.table('offlineCredentials').update(CREDENTIALS_ID, {
+  const db = getDb();
+  await db.table(TABLE.OFFLINE_CREDENTIALS).update(CREDENTIALS_KEY, {
     profile,
     cachedAt: new Date().toISOString()
   });
@@ -199,6 +197,6 @@ export async function updateOfflineCredentialsProfile(
  */
 export async function clearOfflineCredentials(): Promise<void> {
   await waitForDb();
-  const db = getEngineConfig().db!;
-  await db.table('offlineCredentials').delete(CREDENTIALS_ID);
+  const db = getDb();
+  await db.table(TABLE.OFFLINE_CREDENTIALS).delete(CREDENTIALS_KEY);
 }

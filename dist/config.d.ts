@@ -21,7 +21,6 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
-import type Dexie from 'dexie';
 import type { SingleUserGateType, SchemaDefinition, AuthConfig } from './types';
 import type { DemoConfig } from './demo';
 import { type DatabaseConfig } from './database';
@@ -74,8 +73,6 @@ export interface SyncEngineConfig {
      * Use this to keep an existing database name for data continuity.
      */
     databaseName?: string;
-    /** Dexie instance — set internally by `createDatabase()`. Do not set manually. */
-    db?: Dexie;
     /** Supabase client — pass to use a custom client instead of the engine's internal proxy. */
     supabase?: SupabaseClient;
     /** Database creation config — auto-generated when using `schema`, or provided manually. */
@@ -255,4 +252,27 @@ export declare function getTableColumns(name: string): string;
  * @returns The prefixed Supabase table name (e.g., `'stellar_goals'`).
  */
 export declare function resolveSupabaseName(schemaKey: string): string;
+/**
+ * Find the {@link TableConfig} for a given table name.
+ *
+ * Matches against both `supabaseName` and `schemaKey`, so callers can pass
+ * either the prefixed Supabase name (e.g., `'stellar_goals'`) or the raw
+ * schema key (e.g., `'goals'`).
+ *
+ * @param name - The Supabase table name or schema key to look up.
+ * @returns The matching {@link TableConfig}, or `undefined` if not found.
+ */
+export declare function findTableConfig(name: string): TableConfig | undefined;
+/**
+ * Window (ms) during which a locally-modified entity or a realtime-processed entity
+ * is considered "recent" and protected from duplicate processing.
+ *
+ * Used by both `engine.ts` (local-write protection) and `realtime.ts`
+ * (deduplication against the polling path). Defined here in config to avoid a
+ * circular import between those two modules.
+ *
+ * Industry standard range: 500ms–2000ms. 2s covers the sync debounce window
+ * plus network latency with margin.
+ */
+export declare const RECENTLY_MODIFIED_TTL_MS = 2000;
 //# sourceMappingURL=config.d.ts.map

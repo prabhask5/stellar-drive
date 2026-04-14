@@ -60,8 +60,14 @@
  * @see {@link ./config.ts} - Engine configuration and table definitions
  */
 
-import { getEngineConfig, getDexieTableFor, waitForDb } from './config';
-import { clearDbResetFlag } from './database';
+import {
+  getEngineConfig,
+  getDexieTableFor,
+  waitForDb,
+  findTableConfig,
+  RECENTLY_MODIFIED_TTL_MS
+} from './config';
+import { clearDbResetFlag, getDb, TABLE } from './database';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import {
   getPendingSync,
@@ -99,7 +105,7 @@ import { isOnline } from './stores/network';
 import { getSession } from './supabase/auth';
 import { supabase as supabaseProxy } from './supabase/client';
 import { getOfflineCredentials } from './auth/offlineCredentials';
-import { getValidOfflineSession, createOfflineSession } from './auth/offlineSession';
+import { getOfflineSession, createOfflineSession } from './auth/offlineSession';
 import { validateSchema } from './supabase/validate';
 import { formatBytes } from './utils';
 import { getDiagnostics } from './diagnostics';
@@ -114,19 +120,6 @@ import { isDemoMode } from './demo';
 // so we can't read config values at module load time (they'd be undefined).
 // Each function reads from the live config on every call to support hot-reloading.
 // =============================================================================
-
-/**
- * Get the Dexie database instance from the engine config.
- *
- * @returns The initialized Dexie database
- * @throws {Error} If the database hasn't been initialized via `initEngine()`
- */
-function getDb() {
-  const db = getEngineConfig().db;
-  if (!db)
-    throw new Error('Database not initialized. Provide db or database config to initEngine().');
-  return db;
-}
 
 /**
  * Get the Supabase client instance.
@@ -152,9 +145,7 @@ function getSupabase() {
  * @returns The local Dexie table name (may include a prefix)
  */
 function getDexieTableName(name: string): string {
-  const table = getEngineConfig().tables.find(
-    (t) => t.supabaseName === name || t.schemaKey === name
-  );
+  const table = findTableConfig(name);
   return table ? getDexieTableFor(table) : name;
 }
 
@@ -169,10 +160,7 @@ function getDexieTableName(name: string): string {
  * @returns PostgREST column selector (e.g., `"id,name,updated_at"` or `"*"`)
  */
 function getColumns(name: string): string {
-  const table = getEngineConfig().tables.find(
-    (t) => t.supabaseName === name || t.schemaKey === name
-  );
-  return table?.columns || '*';
+  return findTableConfig(name)?.columns || '*';
 }
 
 /**
@@ -238,10 +226,7 @@ function filterPayloadToSchema(
  * @returns `true` if the table is a singleton
  */
 function isSingletonTable(name: string): boolean {
-  const table = getEngineConfig().tables.find(
-    (t) => t.supabaseName === name || t.schemaKey === name
-  );
-  return table?.isSingleton || false;
+  return findTableConfig(name)?.isSingleton || false;
 }
 
 // --- Timing & Threshold Config Accessors ---
@@ -576,18 +561,7 @@ let lastRealtimeStartAt = 0;
 /** Debounce delay for visibility-change syncs (prevents rapid tab-switching spam) */
 const VISIBILITY_SYNC_DEBOUNCE_MS = 1000;
 
-/**
- * How long a locally-modified entity is "protected" from being overwritten by pull.
- *
- * When the user writes locally, the entity is marked as recently modified.
- * During pull, if a remote version arrives within this TTL, it's skipped to
- * prevent the pull from reverting the user's fresh local change before the
- * push has a chance to send it to the server.
- *
- * Industry standard range: 500ms–2000ms. We use 2s to cover the sync debounce
- * window (1s default) plus network latency with margin.
- */
-const RECENTLY_MODIFIED_TTL_MS = 2000;
+/* RECENTLY_MODIFIED_TTL_MS is imported from './config' — see that module for docs. */
 
 /**
  * Map of entity ID → timestamp for recently modified entities.
@@ -1086,7 +1060,7 @@ async function forceFullSync(): Promise<void> {
 
   try {
     const config = getEngineConfig();
-    const db = config.db!;
+    const db = getDb();
 
     await resetSyncCursor();
 
@@ -1160,7 +1134,7 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   }
 
   const config = getEngineConfig();
-  const db = config.db!;
+  const db = getDb();
   const supabase = config.supabase!;
 
   // Use the later of stored cursor or provided minCursor
@@ -1330,7 +1304,7 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   if (hasData) {
     await db.transaction(
       'rw',
-      [...entityTables, db.table('syncQueue'), db.table('conflictHistory')],
+      [...entityTables, db.table('syncQueue'), db.table(TABLE.CONFLICT_HISTORY)],
       async () => {
         for (let i = 0; i < config.tables.length; i++) {
           const data = results[i].data as { id: string; updated_at: string }[] | null;
@@ -1540,8 +1514,8 @@ async function pushPendingOps(): Promise<PushStats> {
         const sortedTableEntries = [...createsByTable.entries()].sort(([tableA], [tableB]) => {
           if (!schema) return 0;
           // Resolve schema keys from supabase names (strip prefix)
-          const configA = getEngineConfig().tables.find((t) => t.supabaseName === tableA);
-          const configB = getEngineConfig().tables.find((t) => t.supabaseName === tableB);
+          const configA = findTableConfig(tableA);
+          const configB = findTableConfig(tableB);
           const keyA = configA?.schemaKey || tableA;
           const keyB = configB?.schemaKey || tableB;
           const aIsChild = isChildTable(schema, keyA);
@@ -2715,7 +2689,7 @@ async function fullReconciliation(): Promise<number> {
   if (!userId) return 0;
 
   const config = getEngineConfig();
-  const db = config.db!;
+  const db = getDb();
   const supabase = config.supabase!;
 
   // Check if cursor is stale enough to warrant full reconciliation
@@ -2834,7 +2808,7 @@ async function hydrateFromRemote(): Promise<void> {
   }
 
   const config = getEngineConfig();
-  const db = config.db!;
+  const db = getDb();
   const supabase = config.supabase!;
 
   // Get user ID for sync cursor isolation
@@ -3021,7 +2995,7 @@ async function cleanupLocalTombstones(): Promise<number> {
   const cutoffStr = cutoffDate.toISOString();
 
   const config = getEngineConfig();
-  const db = config.db!;
+  const db = getDb();
   let totalDeleted = 0;
 
   try {
@@ -3151,7 +3125,7 @@ async function debugTombstones(options?: { cleanup?: boolean; force?: boolean })
   const cutoffStr = cutoffDate.toISOString();
 
   const config = getEngineConfig();
-  const db = config.db!;
+  const db = getDb();
   const supabase = config.supabase!;
 
   debugLog('=== TOMBSTONE DEBUG ===');
@@ -3432,7 +3406,7 @@ export async function startSyncEngine(): Promise<void> {
         return;
       }
 
-      const existingSession = await getValidOfflineSession();
+      const existingSession = await getOfflineSession();
       if (!existingSession) {
         await createOfflineSession(credentials.userId);
         debugLog('[Engine] Offline session created from cached credentials');
@@ -3521,7 +3495,7 @@ export async function startSyncEngine(): Promise<void> {
           return;
         }
 
-        const existingSession = await getValidOfflineSession();
+        const existingSession = await getOfflineSession();
         if (!existingSession) {
           await createOfflineSession(credentials.userId);
           debugLog('[Engine] Offline session created on cold start');
@@ -3885,20 +3859,20 @@ export async function stopSyncEngine(): Promise<void> {
  */
 export async function clearLocalCache(): Promise<void> {
   const config = getEngineConfig();
-  const db = config.db!;
+  const db = getDb();
 
   // Get user ID before clearing to remove their sync cursor
   const userId = await getCurrentUserId();
 
   const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
-  const metaTables = [db.table('syncQueue'), db.table('conflictHistory')];
+  const metaTables = [db.table('syncQueue'), db.table(TABLE.CONFLICT_HISTORY)];
 
   await db.transaction('rw', [...entityTables, ...metaTables], async () => {
     for (const t of entityTables) {
       await t.clear();
     }
     await db.table('syncQueue').clear();
-    await db.table('conflictHistory').clear();
+    await db.table(TABLE.CONFLICT_HISTORY).clear();
   });
 
   // Reset sync cursor (user-specific) and hydration flag

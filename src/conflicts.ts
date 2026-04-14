@@ -68,7 +68,8 @@
  */
 
 import { debugLog, debugError, isDebugMode } from './debug';
-import { getEngineConfig } from './config';
+import { findTableConfig } from './config';
+import { getDb, TABLE } from './database';
 import { getDeviceId } from './deviceId';
 import type { SyncOperationItem } from './types';
 import type { ConflictHistoryEntry } from './types';
@@ -196,9 +197,7 @@ export interface ConflictResolution {
  */
 function getExcludedFields(entityType: string): Set<string> {
   const defaultExcluded = new Set(['id', 'user_id', 'created_at', '_version']);
-  const tableConfig = getEngineConfig().tables.find(
-    (t) => t.schemaKey === entityType || t.supabaseName === entityType
-  );
+  const tableConfig = findTableConfig(entityType);
   return new Set([...defaultExcluded, ...(tableConfig?.excludeFromConflict || [])]);
 }
 
@@ -232,10 +231,7 @@ function getExcludedFields(entityType: string): Set<string> {
  * ```
  */
 function getNumericMergeFields(entityType: string): Set<string> {
-  const tableConfig = getEngineConfig().tables.find(
-    (t) => t.schemaKey === entityType || t.supabaseName === entityType
-  );
-  return new Set(tableConfig?.numericMergeFields || []);
+  return new Set(findTableConfig(entityType)?.numericMergeFields || []);
 }
 
 // =============================================================================
@@ -848,7 +844,7 @@ export async function storeConflictHistory(resolution: ConflictResolution): Prom
 
     /* bulkAdd is used instead of individual adds for efficiency -- one
        IndexedDB transaction instead of N. */
-    await getEngineConfig().db!.table('conflictHistory').bulkAdd(entries);
+    await getDb().table(TABLE.CONFLICT_HISTORY).bulkAdd(entries);
   } catch (error) {
     /* Non-fatal: conflict history is an audit trail, not a critical operation.
        The merged entity has already been computed; failing to record the
@@ -887,11 +883,7 @@ export async function storeConflictHistory(resolution: ConflictResolution): Prom
  * ```
  */
 export async function getPendingOpsForEntity(entityId: string): Promise<SyncOperationItem[]> {
-  const allPending = await getEngineConfig()
-    .db!.table('syncQueue')
-    .where('entityId')
-    .equals(entityId)
-    .toArray();
+  const allPending = await getDb().table('syncQueue').where('entityId').equals(entityId).toArray();
   return allPending as unknown as SyncOperationItem[];
 }
 
@@ -945,7 +937,7 @@ export async function _getRecentConflictHistory(
   limit = 20
 ): Promise<{ entries: ConflictHistoryEntry[]; totalCount: number }> {
   try {
-    const table = getEngineConfig().db!.table('conflictHistory');
+    const table = getDb().table(TABLE.CONFLICT_HISTORY);
     const allEntries = (await table.toArray()) as unknown as ConflictHistoryEntry[];
     const totalCount = allEntries.length;
     // Sort by timestamp descending (newest first) and take the limit
@@ -965,8 +957,8 @@ export async function cleanupConflictHistory(): Promise<number> {
   try {
     /* Filter and delete in one pass. Dexie's `.filter().delete()` iterates
        the table and removes matching rows in a single transaction. */
-    const count = await getEngineConfig()
-      .db!.table('conflictHistory')
+    const count = await getDb()
+      .table(TABLE.CONFLICT_HISTORY)
       .filter((entry: ConflictHistoryEntry) => entry.timestamp < cutoffStr)
       .delete();
 

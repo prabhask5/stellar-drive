@@ -24,7 +24,7 @@
 
 import Dexie from 'dexie';
 import { writable } from 'svelte/store';
-import { getDb } from './database';
+import { getDb, TABLE } from './database';
 import { getEngineConfig, getDexieTableFor } from './config';
 
 // =============================================================================
@@ -267,7 +267,7 @@ export async function seedDemoData(): Promise<void> {
   }
 
   /* Clear system tables */
-  for (const systemTable of ['syncQueue', 'conflictHistory']) {
+  for (const systemTable of ['syncQueue', TABLE.CONFLICT_HISTORY]) {
     try {
       await db.table(systemTable).clear();
     } catch {

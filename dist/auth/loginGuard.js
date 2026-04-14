@@ -45,7 +45,8 @@
  * @module auth/loginGuard
  */
 import { hashValue } from './crypto';
-import { getEngineConfig, waitForDb } from '../config';
+import { waitForDb } from '../config';
+import { getDb, TABLE } from '../database';
 import { debugLog, debugWarn } from '../debug';
 // =============================================================================
 // CONSTANTS
@@ -92,17 +93,14 @@ let consecutiveLocalFailures = 0;
  */
 async function invalidateCachedHash() {
     try {
-        const config = getEngineConfig();
-        const db = config.db;
-        if (db) {
-            const record = await db.table('singleUserConfig').get('config');
-            if (record && record.gateHash) {
-                await db.table('singleUserConfig').update('config', {
-                    gateHash: undefined,
-                    updatedAt: new Date().toISOString()
-                });
-                debugLog('[LoginGuard] Invalidated single-user gateHash');
-            }
+        const db = getDb();
+        const record = await db.table(TABLE.SINGLE_USER_CONFIG).get('config');
+        if (record && record.gateHash) {
+            await db.table(TABLE.SINGLE_USER_CONFIG).update('config', {
+                gateHash: undefined,
+                updatedAt: new Date().toISOString()
+            });
+            debugLog('[LoginGuard] Invalidated single-user gateHash');
         }
     }
     catch (e) {
@@ -123,10 +121,8 @@ async function readPersistentLockout() {
     };
     try {
         await waitForDb();
-        const db = getEngineConfig().db;
-        if (!db)
-            return zero;
-        const record = await db.table('singleUserConfig').get(PIN_LOCKOUT_KEY);
+        const db = getDb();
+        const record = await db.table(TABLE.SINGLE_USER_CONFIG).get(PIN_LOCKOUT_KEY);
         return record ?? zero;
     }
     catch {
@@ -141,10 +137,7 @@ async function readPersistentLockout() {
  */
 async function writePersistentLockout(record) {
     try {
-        const db = getEngineConfig().db;
-        if (db) {
-            await db.table('singleUserConfig').put(record);
-        }
+        await getDb().table(TABLE.SINGLE_USER_CONFIG).put(record);
     }
     catch (e) {
         debugWarn('[LoginGuard] Failed to write persistent lockout:', e);
@@ -239,11 +232,12 @@ export async function preCheckLogin(input) {
             };
         }
         let cachedHash;
-        const config = getEngineConfig();
-        const db = config.db;
-        if (db) {
-            const record = await db.table('singleUserConfig').get('config');
+        try {
+            const record = await getDb().table(TABLE.SINGLE_USER_CONFIG).get('config');
             cachedHash = record?.gateHash;
+        }
+        catch {
+            /* DB not ready yet — fall through to no-cache path */
         }
         if (cachedHash) {
             /* We have a cached hash -- compare locally before touching the network. */

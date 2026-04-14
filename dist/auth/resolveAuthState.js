@@ -35,9 +35,10 @@
  * @module auth/resolveAuthState
  */
 import { getSession, getSessionFromStorage, isSessionExpired } from '../supabase/auth';
-import { getValidOfflineSession } from './offlineSession';
+import { getOfflineSession } from './offlineSession';
 import { resetSingleUserRemote } from './singleUser';
 import { getEngineConfig, waitForDb } from '../config';
+import { getDb, TABLE } from '../database';
 import { supabase } from '../supabase/client';
 import { debugLog, debugWarn, debugError } from '../debug';
 import { isDemoMode } from '../demo';
@@ -151,11 +152,10 @@ export async function resolveAuthState() {
  */
 async function resolveSingleUserAuthState() {
     try {
-        const db = getEngineConfig().db;
-        if (!db) {
-            return { session: null, authMode: 'none', offlineProfile: null };
-        }
-        const config = (await db.table('singleUserConfig').get('config'));
+        const db = getDb();
+        const config = (await db
+            .table(TABLE.SINGLE_USER_CONFIG)
+            .get('config'));
         if (!config) {
             /* No local config -- user has not set up on this device.
                With real email/password auth, new devices go through the login flow
@@ -197,9 +197,9 @@ async function resolveSingleUserAuthState() {
                 }
                 /* Clear local state so the setup flow starts fresh. */
                 try {
-                    await db.table('singleUserConfig').delete('config');
-                    await db.table('offlineCredentials').delete('current_user');
-                    await db.table('offlineSession').delete('current_session');
+                    await db.table(TABLE.SINGLE_USER_CONFIG).delete('config');
+                    await db.table(TABLE.OFFLINE_CREDENTIALS).delete('current_user');
+                    await db.table(TABLE.OFFLINE_SESSION).delete('current_session');
                 }
                 catch (e) {
                     debugWarn('[Auth] Failed to clear local auth state:', e);
@@ -209,7 +209,7 @@ async function resolveSingleUserAuthState() {
         }
         /* Lock check: if the user explicitly locked the app, honour the lock
            even if a valid Supabase session still exists in localStorage. */
-        const lockState = await db.table('singleUserConfig').get('lock_state');
+        const lockState = await db.table(TABLE.SINGLE_USER_CONFIG).get('lock_state');
         if (lockState?.locked) {
             return { session: null, authMode: 'none', offlineProfile: null };
         }
@@ -230,7 +230,7 @@ async function resolveSingleUserAuthState() {
             }
             /* No Supabase session — check for an offline session in IndexedDB. */
             try {
-                const offlineSession = await getValidOfflineSession();
+                const offlineSession = await getOfflineSession();
                 if (offlineSession) {
                     const offlineProfile = {
                         id: 'current_user',
@@ -288,7 +288,7 @@ async function resolveSingleUserAuthState() {
             return { session, authMode: 'supabase', offlineProfile: null };
         }
         try {
-            const offlineSession = await getValidOfflineSession();
+            const offlineSession = await getOfflineSession();
             if (offlineSession) {
                 const offlineProfile = {
                     id: 'current_user',

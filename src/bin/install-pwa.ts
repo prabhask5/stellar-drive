@@ -1584,6 +1584,7 @@ import { resolveRootLayout } from 'stellar-drive/kit';
 import { isSafeRedirect } from 'stellar-drive/utils';
 import { schema } from '$lib/schema';
 import { demoConfig } from '$lib/demo/config';
+import { ROUTES } from '$lib/routes';
 import type { RootLayoutData } from 'stellar-drive/kit';
 import type { LayoutLoad } from './$types';
 
@@ -1625,17 +1626,17 @@ if (browser) {
     onAuthStateChange: (event, session) => {
       if (event === 'SIGNED_IN' && session) {
         const path = window.location.pathname;
-        /* Skip /login (handles its own post-auth flow) and /confirm
+        /* Skip ROUTES.LOGIN (handles its own post-auth flow) and ROUTES.CONFIRM
            (verifyOtp fires SIGNED_IN inside the confirm tab — navigating
            away would interrupt the broadcast-then-close flow mid-flight). */
-        if (!path.startsWith('/login') && !path.startsWith('/confirm')) {
+        if (!path.startsWith(ROUTES.LOGIN) && !path.startsWith(ROUTES.CONFIRM)) {
           goto(path, { invalidateAll: true });
         }
       }
     },
     onAuthKicked: async () => {
       await lockSingleUser();
-      goto('/login');
+      goto(ROUTES.LOGIN);
     }
   });
 }
@@ -1645,7 +1646,7 @@ if (browser) {
 // =============================================================================
 
 /** Routes accessible without authentication. */
-const PUBLIC_ROUTES = ['/policy', '/login', '/demo', '/confirm', '/setup'];
+const PUBLIC_ROUTES = [ROUTES.POLICY, ROUTES.LOGIN, ROUTES.DEMO, ROUTES.CONFIRM, ROUTES.SETUP];
 
 // =============================================================================
 //                            LOAD FUNCTION
@@ -1668,15 +1669,15 @@ export const load: LayoutLoad = async ({ url }): Promise<RootLayoutData> => {
     const result = await resolveRootLayout();
 
     if (result.authMode === 'none') {
-      if (!result.serverConfigured && !url.pathname.startsWith('/setup') && !url.pathname.startsWith('/policy')) {
-        redirect(307, '/setup');
+      if (!result.serverConfigured && !url.pathname.startsWith(ROUTES.SETUP) && !url.pathname.startsWith(ROUTES.POLICY)) {
+        redirect(307, ROUTES.SETUP);
       } else if (result.serverConfigured) {
         const isPublicRoute = PUBLIC_ROUTES.some(r => url.pathname.startsWith(r));
         if (!isPublicRoute) {
           const returnUrl = url.pathname + url.search;
-          const loginUrl = returnUrl && returnUrl !== '/' && isSafeRedirect(returnUrl)
-            ? \`/login?redirect=\${encodeURIComponent(returnUrl)}\`
-            : '/login';
+          const loginUrl = returnUrl && returnUrl !== ROUTES.HOME && isSafeRedirect(returnUrl)
+            ? \`\${ROUTES.LOGIN}?redirect=\${encodeURIComponent(returnUrl)}\`
+            : ROUTES.LOGIN;
           redirect(307, loginUrl);
         }
       }
@@ -2952,7 +2953,6 @@ function generateReconfigureSvelte(opts: InstallOptions): string {
   import { getConfig, setConfig } from 'stellar-drive/config';
   import { isOnline } from 'stellar-drive/stores';
   import { pollForNewServiceWorker, monitorSwLifecycle } from 'stellar-drive/kit';
-  import { onMount } from 'svelte';
   import { browser } from '$app/environment';
 
   // ===========================================================================
@@ -3019,7 +3019,11 @@ function generateReconfigureSvelte(opts: InstallOptions): string {
   //  Lifecycle
   // ===========================================================================
 
-  onMount(() => {
+  /**
+   * Effect: load existing config from the engine on mount.
+   * Runs once — no reactive deps beyond the initial execution.
+   */
+  $effect(() => {
     if (!browser) return;
 
     const config = getConfig();
@@ -5784,7 +5788,6 @@ function generateUpdatePromptComponent(): string {
   //                                IMPORTS
   // ==========================================================================
 
-  import { onMount, onDestroy } from 'svelte';
   import { monitorSwLifecycle, handleSwUpdate } from 'stellar-drive/kit';
 
   // ==========================================================================
@@ -5797,23 +5800,21 @@ function generateUpdatePromptComponent(): string {
   /** Guard flag to prevent double-reload */
   let reloading = false;
 
-  /** Cleanup function returned by monitorSwLifecycle */
-  let cleanup: (() => void) | null = null;
-
   // ==========================================================================
   //                      SERVICE WORKER MONITORING
   // ==========================================================================
 
-  onMount(() => {
-    cleanup = monitorSwLifecycle({
+  /**
+   * Effect: wire up service worker lifecycle monitoring.
+   * Returns the cleanup function so it runs automatically on destroy.
+   */
+  $effect(() => {
+    const cleanup = monitorSwLifecycle({
       onUpdateAvailable: () => {
         showPrompt = true;
       }
     });
-  });
-
-  onDestroy(() => {
-    cleanup?.();
+    return () => cleanup?.();
   });
 
   // ==========================================================================
@@ -5853,6 +5854,46 @@ function generateUpdatePromptComponent(): string {
        </div>
      {/if}
 -->
+`;
+}
+
+// ---------------------------------------------------------------------------
+//                     ROUTES CONSTANT GENERATOR
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a `src/lib/routes.ts` file with route path constants.
+ *
+ * Provides a single source of truth for all route paths used across the
+ * application. Import `ROUTES` from `$lib/routes` instead of hardcoding
+ * path strings to prevent typos and make refactoring easier.
+ *
+ * @returns The TypeScript source for `src/lib/routes.ts`.
+ */
+function generateRoutesTs(): string {
+  return `/**
+ * @fileoverview Route path constants — single source of truth for all routes.
+ *
+ * Import \`ROUTES\` wherever a path string is needed instead of hardcoding
+ * path literals. This prevents typos and makes route renaming a one-line change.
+ *
+ * @example
+ * \`\`\`ts
+ * import { ROUTES } from '$lib/routes';
+ * goto(ROUTES.HOME);
+ * redirect(307, ROUTES.LOGIN);
+ * \`\`\`
+ */
+
+export const ROUTES = {
+  HOME: '/',
+  LOGIN: '/login',
+  CONFIRM: '/confirm',
+  SETUP: '/setup',
+  POLICY: '/policy',
+  DEMO: '/demo',
+  PROFILE: '/profile',
+} as const;
 `;
 }
 
@@ -6767,6 +6808,7 @@ export async function run(): Promise<void> {
     {
       label: 'Library & components',
       entries: [
+        ['src/lib/routes.ts', generateRoutesTs()],
         ['src/lib/schema.ts', generateSchemaFile(opts)],
         ['src/lib/types.generated.ts', generateTypesPlaceholder()],
         ['src/lib/types.ts', generateAppTypes()],

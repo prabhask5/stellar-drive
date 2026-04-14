@@ -82,11 +82,9 @@ export function initEngine(config) {
     if (isDemoMode() && config.database) {
         config.database = { ...config.database, name: config.database.name + '_demo' };
     }
-    /* Create the Dexie database and store the instance on config for engine.ts access. */
+    /* Create the Dexie database — managedDb is set internally by createDatabase(). */
     if (config.database) {
-        _dbReady = createDatabase(config.database).then((db) => {
-            config.db = db;
-        });
+        _dbReady = createDatabase(config.database).then(() => { });
     }
 }
 // =============================================================================
@@ -191,6 +189,31 @@ export function resolveSupabaseName(schemaKey) {
     const table = config.tables.find((t) => t.schemaKey === schemaKey || t.supabaseName === schemaKey);
     return table ? table.supabaseName : schemaKey;
 }
+/**
+ * Find the {@link TableConfig} for a given table name.
+ *
+ * Matches against both `supabaseName` and `schemaKey`, so callers can pass
+ * either the prefixed Supabase name (e.g., `'stellar_goals'`) or the raw
+ * schema key (e.g., `'goals'`).
+ *
+ * @param name - The Supabase table name or schema key to look up.
+ * @returns The matching {@link TableConfig}, or `undefined` if not found.
+ */
+export function findTableConfig(name) {
+    return getEngineConfig().tables.find((t) => t.supabaseName === name || t.schemaKey === name);
+}
+/**
+ * Window (ms) during which a locally-modified entity or a realtime-processed entity
+ * is considered "recent" and protected from duplicate processing.
+ *
+ * Used by both `engine.ts` (local-write protection) and `realtime.ts`
+ * (deduplication against the polling path). Defined here in config to avoid a
+ * circular import between those two modules.
+ *
+ * Industry standard range: 500ms–2000ms. 2s covers the sync debounce window
+ * plus network latency with margin.
+ */
+export const RECENTLY_MODIFIED_TTL_MS = 2000;
 // =============================================================================
 // Schema → Config Generation
 // =============================================================================
@@ -383,11 +406,9 @@ function normalizeAuthConfig(auth) {
     };
     /* Pass through remaining fields with defaults. */
     nested.confirmRedirectPath = flat.confirmRedirectPath || '/confirm';
-    nested.enableOfflineAuth =
-        flat.enableOfflineAuth !== undefined ? flat.enableOfflineAuth : true;
+    nested.enableOfflineAuth = flat.enableOfflineAuth !== undefined ? flat.enableOfflineAuth : true;
     if (flat.sessionValidationIntervalMs !== undefined) {
-        nested.sessionValidationIntervalMs =
-            flat.sessionValidationIntervalMs;
+        nested.sessionValidationIntervalMs = flat.sessionValidationIntervalMs;
     }
     if (flat.profileExtractor) {
         nested.profileExtractor = flat.profileExtractor;

@@ -51,23 +51,21 @@ import type { OfflineSession } from '../types';
  * console.log('Offline token:', session.offlineToken);
  * ```
  *
- * @see {@link getValidOfflineSession} to retrieve the current session.
+ * @see {@link getOfflineSession} to retrieve the current session.
  * @see {@link clearOfflineSession} to revoke the session on logout.
  */
 export declare function createOfflineSession(userId: string): Promise<OfflineSession>;
 /**
- * Get a valid offline session.
+ * Get the current offline session from IndexedDB.
  *
- * Currently equivalent to `getOfflineSession()` (sessions do not expire),
- * but exists as a separate function to serve as the future hook for
- * adding expiration, rotation, or other validation logic without changing
- * the public API contract.
+ * Sessions do not expire — they are only revoked explicitly on re-authentication
+ * or logout. This function is the single source of truth for offline session state.
  *
- * @returns The current valid offline session, or `null` if no session exists.
+ * @returns The current offline session, or `null` if none exists.
  *
  * @example
  * ```ts
- * const session = await getValidOfflineSession();
+ * const session = await getOfflineSession();
  * if (session) {
  *   console.log('User is authenticated offline:', session.userId);
  * }
@@ -75,7 +73,7 @@ export declare function createOfflineSession(userId: string): Promise<OfflineSes
  *
  * @see {@link createOfflineSession} to create a new session after verification.
  */
-export declare function getValidOfflineSession(): Promise<OfflineSession | null>;
+export declare function getOfflineSession(): Promise<OfflineSession | null>;
 /**
  * Clear the offline session from IndexedDB.
  *
