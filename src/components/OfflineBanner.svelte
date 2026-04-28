@@ -94,7 +94,6 @@
       font-size: 0.78rem;
       gap: 0.5rem;
       max-width: none;
-      white-space: normal;
       animation: offline-banner-drop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
   }
