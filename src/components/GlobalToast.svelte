@@ -5,7 +5,6 @@
   renders toasts at the bottom of the viewport.
 
   - Mount once in your root `+layout.svelte`. No props required.
-  - Automatically raises toasts above the demo banner in demo mode.
   - Stacks up to three toasts with distinct bottom offsets.
   - Toasts slide up on entry and fade out on dismiss (via Svelte out:fade).
   - Four variants: info (blue), success (green), error (red), warning (purple).
@@ -20,15 +19,7 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
   import { toastStore, dismissToast } from 'stellar-drive/toast';
-  import { isDemoMode } from 'stellar-drive/demo';
   import type { ToastVariant } from 'stellar-drive/toast';
-
-  // ==========================================================================
-  //                           COMPONENT STATE
-  // ==========================================================================
-
-  /** Whether demo mode is active — raises toasts above the demo banner. */
-  const inDemoMode = $derived(isDemoMode());
 
   /** SVG icon paths for each variant. */
   const ICONS: Record<ToastVariant, { paths: string[]; type: 'stroke' }> = {
@@ -66,8 +57,7 @@
   };
 </script>
 
-<!-- demo-mode class raises toasts above the demo banner -->
-<div class="toast-stack" class:demo-mode={inDemoMode}>
+<div class="toast-stack">
   {#each $toastStore as toast (toast.id)}
     <div class="toast-item toast-{toast.variant}" out:fade={{ duration: 180 }}>
       <div class="toast-content">
@@ -114,17 +104,6 @@
   }
   .toast-item + .toast-item + .toast-item {
     bottom: calc(8rem + env(safe-area-inset-bottom, 0px));
-  }
-
-  /* Demo mode — raise above demo banner */
-  .toast-stack.demo-mode .toast-item {
-    bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
-  }
-  .toast-stack.demo-mode .toast-item + .toast-item {
-    bottom: calc(7.5rem + env(safe-area-inset-bottom, 0px));
-  }
-  .toast-stack.demo-mode .toast-item + .toast-item + .toast-item {
-    bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
   }
 
   @keyframes toastSlideUp {
@@ -238,14 +217,5 @@
       bottom: calc(12.5rem + env(safe-area-inset-bottom, 0px));
     }
 
-    .toast-stack.demo-mode .toast-item {
-      bottom: calc(7.5rem + env(safe-area-inset-bottom, 0px));
-    }
-    .toast-stack.demo-mode .toast-item + .toast-item {
-      bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
-    }
-    .toast-stack.demo-mode .toast-item + .toast-item + .toast-item {
-      bottom: calc(14.5rem + env(safe-area-inset-bottom, 0px));
-    }
   }
 </style>
