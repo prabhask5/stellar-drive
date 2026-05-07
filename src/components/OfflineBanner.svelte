@@ -1,19 +1,17 @@
 <!--
   @fileoverview OfflineBanner — fixed-position notification bar for offline state.
 
-  Renders a persistent amber glass banner just below the top navigation when the
-  app has no network connectivity. Auto-dismisses reactively when connectivity
-  is restored — no explicit dismiss needed.
+  Renders a persistent dark glass banner when the app has no network connectivity.
+  Auto-dismisses reactively when connectivity is restored — no explicit dismiss needed.
 
   - Desktop: pill-shaped, centered, positioned below the 64px top nav
     (accounts for safe-area-inset-top on notch/island devices).
-  - Mobile: full-width bar flush below the island-header, which ends at
-    calc(env(safe-area-inset-top, 47px) + 24px) from the viewport top.
+  - Mobile: pill-shaped, left/right 1rem inset, positioned below the island-header
+    (env(safe-area-inset-top) + 24px + 0.5rem breathing room).
   - Only renders when `$isOnline` is `false`.
   - No dismiss button — auto-hides on reconnect.
-  - Glass morphism styling with amber tint to distinguish from DemoBanner.
+  - Black glass morphism matching DemoBanner style.
   - z-index 9000 — matches DemoBanner tier.
-  - Never overlaps top nav on desktop or island-header on mobile.
 -->
 <script lang="ts">
   import { isOnline } from 'stellar-drive/stores';
@@ -49,48 +47,46 @@
     gap: 0.6rem;
     padding: 0.5rem 1.1rem;
     border-radius: 9999px;
-    background: rgba(180, 120, 0, 0.15);
+    background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 200, 80, 0.2);
-    color: #ffd97a;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #fff;
     font-size: 0.8125rem;
     font-weight: 500;
     letter-spacing: 0.01em;
     white-space: nowrap;
     max-width: calc(100vw - 2rem);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     pointer-events: none;
     animation: offline-banner-slide-down 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .offline-banner-icon {
     flex-shrink: 0;
-    opacity: 0.9;
+    opacity: 0.75;
   }
 
   .offline-banner-text {
-    opacity: 0.95;
+    opacity: 0.9;
   }
 
-  /* ── Mobile: full-width bar flush below island-header ──
-     island-header bottom edge = safe-area-inset-top + 24px from viewport top.
-     Formula: -safe-area-inset-top (header top offset) + safe-area-inset-top*2 + 24px (header height)
-     = safe-area-inset-top + 24px.
-     Using env(safe-area-inset-top, 47px) matches the fallback the header itself uses
-     so the banner stays flush on devices that don't support env(). */
+  /* ── Mobile: pill below island-header, matching desktop black glass ──
+     island-header bottom = env(safe-area-inset-top) + 24px from viewport top.
+     +0.5rem breathing room so the pill clears the header gradient fade. */
   @media (max-width: 767px) {
     .offline-banner {
-      top: calc(env(safe-area-inset-top, 47px) + 24px);
-      left: 0;
-      right: 0;
+      top: calc(env(safe-area-inset-top, 47px) + 24px + 0.5rem);
+      left: 1rem;
+      right: 1rem;
       transform: none;
-      border-radius: 0;
-      border-left: none;
-      border-right: none;
-      border-top: none;
-      border-bottom: 1px solid rgba(255, 200, 80, 0.18);
-      padding: 0.45rem 1rem;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+      padding: 0.45rem 0.85rem;
       font-size: 0.78rem;
       gap: 0.5rem;
       max-width: none;
@@ -112,7 +108,7 @@
   @keyframes offline-banner-drop {
     from {
       opacity: 0;
-      transform: translateY(-100%);
+      transform: translateY(-0.75rem);
     }
     to {
       opacity: 1;

@@ -106,7 +106,7 @@
     background: rgba(255, 255, 255, 0.28);
   }
 
-  /* ── Mobile: compact cinematic pill anchored above tab bar ── */
+  /* ── Mobile: pill anchored above tab bar, matching desktop black glass ── */
   @media (max-width: 767px) {
     .demo-banner {
       left: 1rem;
@@ -114,30 +114,22 @@
       bottom: calc(var(--demo-banner-bottom, 0px) + env(safe-area-inset-bottom, 0px) + 0.5rem);
       transform: none;
       border-radius: 12px;
-      border: 1px solid rgba(212, 160, 57, 0.25);
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
       padding: 0.5rem 0.85rem;
       font-size: 0.75rem;
       gap: 0.5rem;
       max-width: none;
       white-space: normal;
       flex-wrap: nowrap;
-      /* Obsidian glass with citrine shimmer */
-      background: linear-gradient(
-        135deg,
-        rgba(14, 12, 8, 0.92) 0%,
-        rgba(22, 18, 10, 0.96) 100%
-      );
-      backdrop-filter: blur(24px) saturate(1.6);
-      -webkit-backdrop-filter: blur(24px) saturate(1.6);
-      box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.5),
-        0 0 0 0.5px rgba(212, 160, 57, 0.15),
-        inset 0 1px 0 rgba(212, 160, 57, 0.1);
       animation: demo-banner-rise 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .demo-banner-text {
-      color: rgba(240, 225, 190, 0.9);
+      color: rgba(255, 255, 255, 0.95);
       font-size: 0.75rem;
       font-weight: 500;
       flex: 1;
@@ -145,28 +137,28 @@
     }
 
     .demo-banner-subtitle {
-      color: rgba(160, 130, 80, 0.75);
+      color: rgba(255, 255, 255, 0.55);
       font-size: 0.7rem;
     }
 
     .demo-banner-link {
-      color: rgba(212, 160, 57, 0.9);
-      background: rgba(212, 160, 57, 0.1);
+      color: rgba(255, 255, 255, 0.65);
+      background: rgba(255, 255, 255, 0.08);
       border-radius: 6px;
       padding: 0.2rem 0.5rem;
       font-size: 0.68rem;
       font-weight: 600;
       letter-spacing: 0.03em;
       text-transform: uppercase;
-      border: 1px solid rgba(212, 160, 57, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       flex-shrink: 0;
       white-space: nowrap;
     }
 
     .demo-banner-close {
-      background: rgba(255, 255, 255, 0.06);
-      color: rgba(212, 160, 57, 0.65);
-      border: 1px solid rgba(212, 160, 57, 0.12);
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       flex-shrink: 0;
       width: 1.35rem;
       height: 1.35rem;
