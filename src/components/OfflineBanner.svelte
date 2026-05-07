@@ -7,7 +7,7 @@
   - Desktop: pill-shaped, centered, positioned below the 64px top nav
     (accounts for safe-area-inset-top on notch/island devices).
   - Mobile: pill-shaped, left/right 1rem inset, positioned below the island-header
-    (env(safe-area-inset-top) + 24px + 0.5rem breathing room).
+    (env(safe-area-inset-top) * 2 + 24px + 0.5rem breathing room).
   - Only renders when `$isOnline` is `false`.
   - No dismiss button — auto-hides on reconnect.
   - Black glass morphism matching DemoBanner style.
@@ -72,11 +72,11 @@
   }
 
   /* ── Mobile: pill below island-header, matching desktop black glass ──
-     island-header bottom = env(safe-area-inset-top) + 24px from viewport top.
+     island-header height = env(safe-area-inset-top) * 2 + 24px.
      +0.5rem breathing room so the pill clears the header gradient fade. */
   @media (max-width: 767px) {
     .offline-banner {
-      top: calc(env(safe-area-inset-top, 47px) + 24px + 0.5rem);
+      top: calc(env(safe-area-inset-top, 47px) * 2 + 24px + 0.5rem);
       left: 1rem;
       right: 1rem;
       transform: none;
