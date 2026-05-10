@@ -139,9 +139,22 @@ export async function resolveAuthState() {
  * 7. **Expired session with valid refresh token**: Attempts token refresh.
  *    On success, returns `authMode: 'supabase'`. On failure, falls through.
  *
- * 8. **Offline with cached session** (fallback for `navigator.onLine` lying):
- *    Even an expired Supabase session is usable offline.
- *    Returns `authMode: 'supabase'`.
+ * 7b. **Refresh failed — server confirmed invalid (4xx, excluding 429)**:
+ *    The server explicitly rejected the token. Returns `authMode: 'none'`
+ *    immediately. The offline fallback is skipped: this is a confirmed
+ *    credential failure, not a network issue.
+ *
+ * 7c. **No Supabase session / non-network refresh failure (5xx, 429, etc.)**:
+ *    We are in the online path (`isOffline` returned false) with no valid
+ *    session and no network exception during refresh. Returns `authMode: 'none'`.
+ *    The offline session fallback is only permitted when a network error
+ *    occurred (step 8), because only then might `navigator.onLine` have lied.
+ *
+ * 8. **Network error during refresh** (fallback for `navigator.onLine` lying):
+ *    A JavaScript exception during `refreshSession()` suggests actual
+ *    connectivity loss. Falls through to the offline session as a safety net.
+ *    Returns `authMode: 'offline'` or `authMode: 'none'` depending on whether
+ *    an offline session exists.
  *
  * 9. **Offline with offline session**: Falls back to offline credentials.
  *    Returns `authMode: 'offline'`.
@@ -264,7 +277,13 @@ async function resolveSingleUserAuthState() {
         /* If the access token is expired, try refreshing before giving up.
            Refresh tokens outlive the access token -- without this, users are forced
            to re-enter their PIN on every page load once the access token expires
-           (default Supabase access token lifetime: 1 hour). */
+           (default Supabase access token lifetime: 1 hour).
+    
+           Two flags gate the offline fallback:
+           - confirmedExpired: server returned 4xx (non-429) → real credential failure → no fallback
+           - networkErrorDuringRefresh: JS exception or retryable server error → might be offline → allow fallback */
+        let confirmedExpired = false;
+        let networkErrorDuringRefresh = false;
         if (session && isSessionExpired(session)) {
             debugLog('[Auth] Single-user session expired, attempting refresh...');
             try {
@@ -274,11 +293,25 @@ async function resolveSingleUserAuthState() {
                     debugLog('[Auth] Single-user session refreshed successfully');
                 }
                 else {
-                    debugWarn('[Auth] Single-user session refresh failed:', error?.message);
+                    if (error?.status && error.status >= 400 && error.status < 500 && error.status !== 429) {
+                        /* 4xx (non-rate-limit): server explicitly rejected the token.
+                           Confirmed credential failure — skip offline fallback entirely. */
+                        confirmedExpired = true;
+                        debugWarn('[Auth] Refresh token rejected by server (HTTP', error.status, ') — credentials confirmed expired');
+                    }
+                    else {
+                        /* 5xx, 429, no status: retryable or transient server-side issue.
+                           Treat the same as a network error and allow offline fallback. */
+                        networkErrorDuringRefresh = true;
+                        debugWarn('[Auth] Single-user session refresh failed (transient):', error?.message);
+                    }
                     session = null;
                 }
             }
             catch {
+                /* JavaScript exception (fetch failed, timeout, etc.) — genuine network
+                   error. Allow offline fallback; navigator.onLine may have lied. */
+                networkErrorDuringRefresh = true;
                 session = null;
             }
         }
@@ -299,14 +332,25 @@ async function resolveSingleUserAuthState() {
             return { session, authMode: 'supabase', offlineProfile: null };
         }
         // =========================================================================
-        // No valid online session -- check offline fallbacks
-        // (handles the case where navigator.onLine lied and we fell through)
+        // No valid online session — offline fallback ONLY for network errors
         // =========================================================================
-        if (session) {
-            /* Even an expired session is usable — we tried refresh and it failed,
-               but we might actually be offline (navigator.onLine lied). */
-            return { session, authMode: 'supabase', offlineProfile: null };
+        /* Server confirmed credentials are invalid. Force re-auth immediately. */
+        if (confirmedExpired) {
+            debugLog('[Auth] Confirmed expired credentials — returning none');
+            return { session: null, authMode: 'none', offlineProfile: null };
         }
+        /* We are in the online path (isOffline() returned false) with no valid
+           session and no network error during refresh. This covers:
+           - getSession() returned null: no Supabase session exists on this device
+           - Session was null initially (no refresh was attempted)
+           Both mean credentials are definitively absent while online. Allowing the
+           offline session here would mask a real auth failure. */
+        if (!networkErrorDuringRefresh) {
+            debugLog('[Auth] No valid online session with no network error — returning none');
+            return { session: null, authMode: 'none', offlineProfile: null };
+        }
+        /* Network error during refresh — navigator.onLine may have lied about
+           connectivity. Allow offline session as a safety net. */
         try {
             const offlineSession = await getOfflineSession();
             if (offlineSession) {

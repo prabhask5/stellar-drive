@@ -2072,12 +2072,12 @@ export async function runFullSync(quiet = false, skipPull = false) {
     // This causes the "sync succeeded but nothing synced" bug
     const userId = await getCurrentUserId();
     if (!userId) {
-        debugWarn('[SYNC] No authenticated user - cannot sync. RLS would silently block all writes.');
-        if (!quiet) {
-            syncStatusStore.setStatus('error');
-            syncStatusStore.setError('Not signed in', 'Please sign in to sync your data.');
-            syncStatusStore.setSyncMessage('Sign in required to sync');
-        }
+        /* No valid session while online — the refresh token is expired or invalid.
+           Kick the user to login rather than showing a "sign in to sync" error,
+           which would leave them stranded in a partially functional state. Pending
+           local changes are preserved (not cleared) so they sync after re-auth. */
+        debugWarn('[SYNC] No authenticated user — kicking to re-auth.');
+        getEngineConfig().onAuthKicked?.('Session expired. Please sign in again.');
         return;
     }
     // Atomically acquire sync lock to prevent concurrent syncs
@@ -2868,11 +2868,24 @@ export async function startSyncEngine() {
     authStateUnsubscribe = supabase.auth.onAuthStateChange(async (event, session) => {
         debugLog(`[SYNC] Auth state change: ${event}`);
         if (event === 'SIGNED_OUT') {
-            // User signed out - stop realtime and show error
-            debugWarn('[SYNC] User signed out - stopping sync');
+            /* SIGNED_OUT fires when Supabase invalidates the session externally
+               (token rotation failure, another device signed out, server revocation).
+               When triggered by our own signOut() call, the subscription is already
+               unsubscribed before supabase.auth.signOut() runs, so this handler
+               is only reached for externally-initiated sign-outs.
+               Actively kick to login rather than leaving the user on a protected page
+               with a "please sign in" sync error. */
+            debugWarn('[SYNC] External sign-out detected — kicking to login');
             stopRealtimeSubscriptions();
-            syncStatusStore.setStatus('error');
-            syncStatusStore.setError('Signed out', 'Please sign in to sync your data.');
+            const signedOutCfg = getEngineConfig();
+            if (signedOutCfg.onAuthKicked) {
+                await clearPendingSyncQueue();
+                signedOutCfg.onAuthKicked('Your session was ended. Please sign in again.');
+            }
+            else {
+                syncStatusStore.setStatus('error');
+                syncStatusStore.setError('Signed out', 'Please sign in to sync your data.');
+            }
         }
         else if (event === 'SIGNED_IN') {
             // User just logged in — restart realtime + full sync to hydrate
